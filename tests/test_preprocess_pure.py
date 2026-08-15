@@ -1,0 +1,147 @@
+"""The pure helpers: no network, no globals, no mocks needed."""
+
+import pytest
+
+from preprocess import (
+    ambiguity_score,
+    drop_unsourced_collisions,
+    host_of,
+    normalize_repo,
+    normalize_website,
+    partition_results,
+    rank_sitemap_urls,
+    registrable,
+    score_url,
+    slugify,
+)
+from schema import (
+    DisambiguationDraft,
+    Identity,
+    NameCollision,
+    SynthesisDraft,
+    Vocabulary,
+    What,
+)
+
+SITEMAP = [
+    "https://acme.dev/blog/2019/hello-world",
+    "https://acme.dev/privacy",
+    "https://acme.dev/pricing",
+    "https://acme.dev/",
+    "https://acme.dev/docs/getting-started",
+    "https://acme.dev/careers",
+    "https://acme.dev/about",
+]
+
+
+def test_high_value_pages_outrank_blog_and_legal() -> None:
+    ranked = rank_sitemap_urls(SITEMAP, limit=5)
+
+    assert ranked[0] == "https://acme.dev/pricing"
+    assert "https://acme.dev/privacy" not in ranked
+    assert "https://acme.dev/careers" not in ranked
+    assert "https://acme.dev/blog/2019/hello-world" not in ranked
+
+
+def test_ranking_excludes_homepage_and_respects_limit() -> None:
+    ranked = rank_sitemap_urls(SITEMAP, limit=2)
+
+    assert len(ranked) == 2
+    assert "https://acme.dev/" not in ranked
+
+
+def test_ranking_is_deterministic_and_dedupes() -> None:
+    duped = SITEMAP + ["https://acme.dev/pricing"]
+
+    assert rank_sitemap_urls(duped) == rank_sitemap_urls(duped)
+    assert rank_sitemap_urls(duped).count("https://acme.dev/pricing") == 1
+
+
+def test_ranking_returns_nothing_rather_than_junk() -> None:
+    assert rank_sitemap_urls(["https://acme.dev/privacy", "https://acme.dev/terms"]) == []
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("https://github.com/getcursor/cursor.git", "getcursor/cursor"),
+        ("github.com/getcursor/cursor/", "getcursor/cursor"),
+        ("https://github.com/getcursor/cursor/tree/main/src", "getcursor/cursor"),
+        ("getcursor/cursor", "getcursor/cursor"),
+        ("  ", None),
+        (None, None),
+        ("nope", None),
+    ],
+)
+def test_normalize_repo(raw, expected) -> None:
+    assert normalize_repo(raw) == expected
+
+
+def test_normalize_website_adds_scheme_and_trims() -> None:
+    assert normalize_website("acme.dev/") == "https://acme.dev"
+    assert normalize_website("http://acme.dev") == "http://acme.dev"
+
+
+def test_host_and_registrable_collapse_subdomains() -> None:
+    assert host_of("https://www.acme.dev/x") == "acme.dev"
+    assert registrable(host_of("https://docs.acme.dev/x")) == "acme.dev"
+
+
+def test_slugify() -> None:
+    assert slugify("  Field Note!! ") == "field-note"
+    assert slugify("!!!") == "product"
+
+
+def test_partition_splits_owned_from_foreign() -> None:
+    urls = [
+        "https://acme.dev/a",
+        "https://docs.acme.dev/b",
+        "https://en.wikipedia.org/wiki/Acme",
+        "https://reddit.com/r/x",
+    ]
+
+    mine, other = partition_results(urls, ["acme.dev"])
+
+    assert mine == ["https://acme.dev/a", "https://docs.acme.dev/b"]
+    assert len(other) == 2
+
+
+def test_ambiguity_score_is_share_of_namespace_not_owned() -> None:
+    urls = ["https://acme.dev/a", "https://other.org/b", "https://third.io/c"]
+
+    assert ambiguity_score(urls, ["acme.dev"]) == 0.667
+    assert ambiguity_score(urls, ["acme.dev", "other.org", "third.io"]) == 0.0
+    assert ambiguity_score([], ["acme.dev"]) == 0.0
+
+
+def _draft(*collisions: NameCollision) -> SynthesisDraft:
+    return SynthesisDraft(
+        identity=Identity(canonical_name="Acme", slug="acme"),
+        what=What(),
+        vocabulary=Vocabulary(),
+        disambiguation=DisambiguationDraft(name_collisions=list(collisions)),
+    )
+
+
+def test_guard_drops_collisions_we_never_fetched() -> None:
+    real = NameCollision(
+        name="Acme Corp", what_it_is="cartoon company", evidence_url="https://seen.example/a"
+    )
+    fabricated = NameCollision(
+        name="Acme Bank", what_it_is="invented", evidence_url="https://never-fetched.example/x"
+    )
+
+    kept, dropped = drop_unsourced_collisions(_draft(real, fabricated), ["https://seen.example/a"])
+
+    assert [c.name for c in kept.disambiguation.name_collisions] == ["Acme Corp"]
+    assert len(dropped) == 1
+    assert "Acme Bank" in dropped[0]
+
+
+def test_guard_ignores_trailing_slash_mismatch() -> None:
+    c = NameCollision(name="X", what_it_is="y", evidence_url="https://seen.example/a/")
+
+    kept, dropped = drop_unsourced_collisions(_draft(c), ["https://seen.example/a"])
+
+    assert len(kept.disambiguation.name_collisions) == 1
+    assert dropped == []

@@ -1,0 +1,584 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "field-note T0",
+    "version": "0.1.0"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "Disambiguation": {
+        "description": "Draft plus the score we compute ourselves rather than ask for.",
+        "properties": {
+          "name_collisions": {
+            "items": {
+              "$ref": "#/components/schemas/NameCollision"
+            },
+            "title": "Name Collisions",
+            "type": "array"
+          },
+          "positive_signals": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Positive Signals",
+            "type": "array"
+          },
+          "negative_signals": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Negative Signals",
+            "type": "array"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notes"
+          },
+          "ambiguity_score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Ambiguity Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "ambiguity_score"
+        ],
+        "title": "Disambiguation",
+        "type": "object"
+      },
+      "ErrorEvent": {
+        "properties": {
+          "event": {
+            "const": "error",
+            "default": "error",
+            "title": "Event",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "map",
+                  "scrape_site",
+                  "scrape_repo",
+                  "search_collisions",
+                  "find_similar",
+                  "search_context",
+                  "synthesize"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stage"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "fatal": {
+            "default": false,
+            "title": "Fatal",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorEvent",
+        "type": "object"
+      },
+      "Identity": {
+        "properties": {
+          "canonical_name": {
+            "title": "Canonical Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "tagline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tagline"
+          },
+          "homepage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Homepage"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Repo"
+          },
+          "docs_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Docs Url"
+          },
+          "package_names": {
+            "items": {
+              "$ref": "#/components/schemas/PackageRef"
+            },
+            "title": "Package Names",
+            "type": "array"
+          },
+          "cli_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cli Commands",
+            "type": "array"
+          },
+          "org_or_owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Org Or Owner"
+          },
+          "official_accounts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Official Accounts",
+            "type": "object"
+          }
+        },
+        "required": [
+          "canonical_name",
+          "slug"
+        ],
+        "title": "Identity",
+        "type": "object"
+      },
+      "NameCollision": {
+        "description": "Something else that shares this product's name. Observed, never recalled.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "what_it_is": {
+            "title": "What It Is",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Domain"
+          },
+          "why_confusable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Why Confusable"
+          },
+          "evidence_url": {
+            "title": "Evidence Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "what_it_is",
+          "evidence_url"
+        ],
+        "title": "NameCollision",
+        "type": "object"
+      },
+      "PackageRef": {
+        "properties": {
+          "registry": {
+            "title": "Registry",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "registry",
+          "name"
+        ],
+        "title": "PackageRef",
+        "type": "object"
+      },
+      "ProductDossier": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "what": {
+            "$ref": "#/components/schemas/What"
+          },
+          "vocabulary": {
+            "$ref": "#/components/schemas/Vocabulary"
+          },
+          "disambiguation": {
+            "$ref": "#/components/schemas/Disambiguation"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/Provenance"
+          }
+        },
+        "required": [
+          "identity",
+          "what",
+          "vocabulary",
+          "disambiguation",
+          "provenance"
+        ],
+        "title": "ProductDossier",
+        "type": "object"
+      },
+      "Provenance": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/Source"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "field_confidence": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Field Confidence",
+            "type": "object"
+          },
+          "degraded_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded Sources",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "runtime_ms": {
+            "title": "Runtime Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generated_at",
+          "runtime_ms"
+        ],
+        "title": "Provenance",
+        "type": "object"
+      },
+      "ResultEvent": {
+        "properties": {
+          "event": {
+            "const": "result",
+            "default": "result",
+            "title": "Event",
+            "type": "string"
+          },
+          "dossier": {
+            "$ref": "#/components/schemas/ProductDossier"
+          }
+        },
+        "required": [
+          "dossier"
+        ],
+        "title": "ResultEvent",
+        "type": "object"
+      },
+      "Source": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "fetched_at": {
+            "format": "date-time",
+            "title": "Fetched At",
+            "type": "string"
+          },
+          "via": {
+            "enum": [
+              "firecrawl",
+              "exa",
+              "http"
+            ],
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "fetched_at",
+          "via"
+        ],
+        "title": "Source",
+        "type": "object"
+      },
+      "StageEvent": {
+        "properties": {
+          "event": {
+            "const": "stage",
+            "default": "stage",
+            "title": "Event",
+            "type": "string"
+          },
+          "stage": {
+            "enum": [
+              "map",
+              "scrape_site",
+              "scrape_repo",
+              "search_collisions",
+              "find_similar",
+              "search_context",
+              "synthesize"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "done"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "stage",
+          "status"
+        ],
+        "title": "StageEvent",
+        "type": "object"
+      },
+      "Vocabulary": {
+        "description": "How real users refer to the product when they talk about it.",
+        "properties": {
+          "user_terms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "User Terms",
+            "type": "array"
+          },
+          "common_misspellings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Common Misspellings",
+            "type": "array"
+          },
+          "feature_jargon": {
+            "description": "Product-specific words with no namesakes. Often a better search key than the product name itself.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Feature Jargon",
+            "type": "array"
+          },
+          "adjacent_products": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Adjacent Products",
+            "type": "array"
+          }
+        },
+        "title": "Vocabulary",
+        "type": "object"
+      },
+      "What": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Category"
+          },
+          "subcategory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subcategory"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "primary_use_cases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Primary Use Cases",
+            "type": "array"
+          },
+          "target_users": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Users",
+            "type": "array"
+          },
+          "key_features": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Key Features",
+            "type": "array"
+          },
+          "tech_stack": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tech Stack",
+            "type": "array"
+          },
+          "pricing_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pricing Model"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "License"
+          },
+          "maturity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Maturity"
+          }
+        },
+        "title": "What",
+        "type": "object"
+      }
+    }
+  }
+}
