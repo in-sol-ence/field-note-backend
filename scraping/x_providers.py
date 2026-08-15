@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import httpx
 
 from assets import Signal
+from schema import ProductDossier
 from x_signals import to_signals, tweets_to_signals
 
 # Repo root: field-note-backend/
@@ -63,6 +64,30 @@ def _complaint_query(product: str, extra: str | None = None) -> str:
     if extra:
         return f"{base} {extra}"
     return base
+
+
+def dossier_to_search_queries(dossier: ProductDossier) -> list[str]:
+    """Build focused X queries from T0's identity and disambiguation context."""
+    identity = dossier.identity
+    names = [identity.canonical_name, *identity.aliases]
+    names = list(dict.fromkeys(name.strip() for name in names if name.strip()))
+    if not names:
+        raise ValueError("dossier identity has no product name")
+
+    # Search the canonical name and up to two useful aliases independently so
+    # providers can allocate results across the ways customers name a product.
+    queries = [_complaint_query(name) for name in names[:3]]
+    jargon = next(
+        (
+            term.strip()
+            for term in dossier.vocabulary.feature_jargon
+            if term.strip() and term.casefold() not in {name.casefold() for name in names}
+        ),
+        None,
+    )
+    if jargon:
+        queries.append(_complaint_query(identity.canonical_name, f'"{jargon}"'))
+    return list(dict.fromkeys(queries))
 
 
 def load_fixture_signals(path: str | Path) -> list[Signal]:
@@ -185,6 +210,7 @@ def scrape_x(
     provider: str | None = None,
     search_queries: list[str] | None = None,
     product: str | None = None,
+    dossier: ProductDossier | None = None,
     count: int = 20,
     result_type: str = "Latest",
     fixture_path: str | None = None,
@@ -202,6 +228,8 @@ def scrape_x(
         return load_fixture_signals(path)[:count]
 
     queries = list(search_queries or [])
+    if not queries and dossier is not None:
+        queries = dossier_to_search_queries(dossier)
     if not queries and product:
         queries = [_complaint_query(product)]
     if not queries:
