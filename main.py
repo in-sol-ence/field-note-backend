@@ -8,8 +8,10 @@ the network.
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+import report_store
 from pipeline import MissingCredentials, preflight, run_stream
 from schema import ErrorEvent, Event, PreprocessRequest
 from scraping.routes import router as scrape_router
@@ -17,6 +19,16 @@ from scraping.routes import router as scrape_router
 app = FastAPI(
     title="Cursor Hackathon API",
     version="0.1.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 app.include_router(scrape_router)
 
@@ -35,6 +47,24 @@ async def root() -> dict[str, str]:
 async def health() -> dict[str, str]:
     """Report whether the API is available, and whether it returns real data."""
     return {"status": "ok", "mode": MODE}
+
+
+@app.get("/reports")
+async def list_reports() -> dict[str, list[str]]:
+    """Product slugs with a stored report, for the dashboard's picker."""
+    return {"reports": report_store.list_slugs()}
+
+
+@app.get("/report/{slug}")
+async def get_report(slug: str) -> dict:
+    """The dashboard payload for one product: issues, evidence, health score."""
+    report = report_store.load(slug)
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no report for {slug!r}; available: {report_store.list_slugs()}",
+        )
+    return report
 
 
 def _frame(event: Event) -> str:
