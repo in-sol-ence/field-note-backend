@@ -18,6 +18,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# demo_server.py flips this to "demo". Reported by /health so a client can tell
+# a real backend from a canned one before trusting its output.
+MODE = "live"
+
 
 @app.get("/")
 async def root() -> dict[str, str]:
@@ -27,8 +31,8 @@ async def root() -> dict[str, str]:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    """Report whether the API is available."""
-    return {"status": "ok"}
+    """Report whether the API is available, and whether it returns real data."""
+    return {"status": "ok", "mode": MODE}
 
 
 def _frame(event: Event) -> str:

@@ -99,4 +99,7 @@ async def fake_stream(website, repo, form, name):
 
 pipeline.preprocess_stream = fake_stream
 
-from main import app  # noqa: E402  - imported after the patch lands
+import main  # noqa: E402  - imported after the patch lands
+
+main.MODE = "demo"  # so /health advertises that this backend is canned
+app = main.app
