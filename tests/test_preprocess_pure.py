@@ -3,6 +3,8 @@
 import pytest
 
 from preprocess import (
+    _draft_note,
+    _section_reached,
     inputs_look_related,
     ambiguity_score,
     drop_unsourced_collisions,
@@ -203,3 +205,52 @@ def test_a_repo_about_a_different_product_is_flagged() -> None:
 
 def test_no_repo_is_never_flagged() -> None:
     assert inputs_look_related("https://acme.dev", None, "anything", "")
+
+
+# ---- synthesis sub-steps -------------------------------------------------
+
+
+def _sections(chunks: list[str]) -> list[str]:
+    """What the note would say, fed the draft one chunk at a time."""
+    seen: set[str] = set()
+    tail, out = "", []
+    for piece in chunks:
+        tail = (tail + piece)[-64:]
+        if label := _section_reached(tail, seen):
+            out.append(label)
+    return out
+
+
+def test_sections_are_announced_in_the_order_the_model_writes_them() -> None:
+    draft = '{"identity": {"canonical_name": "Acme"}, "what": {}, "vocabulary": {}}'
+    assert _sections(list(draft)) == [
+        "naming the product",
+        "describing what it does",
+        "collecting its vocabulary",
+    ]
+
+
+def test_a_key_split_across_chunks_is_still_seen() -> None:
+    # Token boundaries fall wherever the model puts them, so the key the note
+    # keys off arrives in pieces more often than not.
+    assert _sections(['{"ident', 'ity": {}, "wh', 'at": {}}']) == [
+        "naming the product",
+        "describing what it does",
+    ]
+
+
+def test_a_section_is_announced_once_however_often_it_recurs() -> None:
+    # "what" appears again inside the prose the model writes, and a note that
+    # walked backwards would read as the run losing its place.
+    assert _sections(['{"what": {"category": "', 'a tool for "what" it is"}}']) == [
+        "describing what it does"
+    ]
+
+
+def test_the_note_reports_size_only_once_there_is_a_draft_to_measure() -> None:
+    assert _draft_note("grok-4.6", "naming the product", 0) == (
+        "grok-4.6 · naming the product"
+    )
+    assert _draft_note("grok-4.6", "naming the product", 2431) == (
+        "grok-4.6 · naming the product · 2.4k chars"
+    )

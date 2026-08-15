@@ -471,8 +471,52 @@ def _build_prompt(name: str, website: str, repo: str | None, form: str | None, e
     return "\n\n".join(parts)
 
 
-async def _synthesize(prompt: str) -> SynthesisDraft:
-    """One call, then at most one repair seeded with the validation error."""
+# The top-level keys of SynthesisDraft, in the order the model writes them.
+# Watching them arrive in the token stream is the only honest way to say what
+# synthesis is doing: it is a single call, and it is the run's longest wait.
+_DRAFT_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("identity", "naming the product"),
+    ("what", "describing what it does"),
+    ("vocabulary", "collecting its vocabulary"),
+    ("disambiguation", "sorting out name collisions"),
+    ("field_confidence", "scoring its own confidence"),
+)
+
+# How much of the tail to keep while watching for the next section key, and how
+# long the note may go unchanged before it reports the draft growing instead.
+_TAIL_WINDOW = 64
+_NOTE_EVERY = 2.0
+
+
+def _section_reached(tail: str, seen: set[str]) -> str | None:
+    """Label for the first unseen draft section named in tail, if any.
+
+    Reads a sliding window rather than the whole draft so the scan stays cheap
+    across thousands of chunks; keys split across a chunk boundary still land
+    inside it.
+    """
+    for key, label in _DRAFT_SECTIONS:
+        if key not in seen and f'"{key}"' in tail:
+            seen.add(key)
+            return label
+    return None
+
+
+def _draft_note(model: str, section: str, written: int) -> str:
+    """One sub-step line: the model, what it is writing, and how much of it."""
+    if written < 1000:
+        return f"{model} · {section}"
+    return f"{model} · {section} · {written / 1000:.1f}k chars"
+
+
+async def _synthesize(prompt: str, blocks: int) -> AsyncIterator[str | SynthesisDraft]:
+    """One call, then at most one repair seeded with the validation error.
+
+    Yields a note before each model call and the draft itself last. The notes
+    exist because this stage is the run's longest single wait: without them the
+    UI can only say "synthesizing" for a minute, and a silent repair attempt is
+    indistinguishable from a hang.
+    """
     client, s = _llm(), get_settings()
     messages = [
         {"role": "system", "content": _SYSTEM},
@@ -480,14 +524,41 @@ async def _synthesize(prompt: str) -> SynthesisDraft:
     ]
     last_err: Exception | None = None
     for attempt in range(2):
-        resp = await client.chat.completions.create(
+        section = "reading %d evidence blocks" % blocks
+        if attempt:
+            section = "repairing the schema it broke"
+        yield _draft_note(s.llm_model, section, 0)
+
+        # Streamed for the notes, not for the output: the draft is only usable
+        # once it is whole, but the tokens on the way tell the operator which
+        # part of the dossier is being written right now.
+        stream = await client.chat.completions.create(
             model=s.llm_model,
             messages=messages,
             response_format={"type": "json_object"},
+            stream=True,
         )
-        raw = resp.choices[0].message.content or "{}"
+        parts: list[str] = []
+        written, tail, seen = 0, "", set()
+        last_note = time.monotonic()
+        async for chunk in stream:
+            piece = chunk.choices[0].delta.content or "" if chunk.choices else ""
+            if not piece:
+                continue
+            parts.append(piece)
+            written += len(piece)
+            tail = (tail + piece)[-_TAIL_WINDOW:]
+            if label := _section_reached(tail, seen):
+                section = label
+            elif time.monotonic() - last_note < _NOTE_EVERY:
+                continue
+            yield _draft_note(s.llm_model, section, written)
+            last_note = time.monotonic()
+
+        raw = "".join(parts) or "{}"
         try:
-            return SynthesisDraft.model_validate_json(raw)
+            yield SynthesisDraft.model_validate_json(raw)
+            return
         except ValidationError as e:
             last_err = e
             messages += [
@@ -675,7 +746,15 @@ async def preprocess_stream(
 
     # ---- Stage D: synthesis --------------------------------------------
     yield StageEvent(stage="synthesize", status="running", detail=settings.llm_model)
-    draft = await _synthesize(_build_prompt(guess_name, site, repo_slug, form, ev))
+    draft: SynthesisDraft | None = None
+    prompt = _build_prompt(guess_name, site, repo_slug, form, ev)
+    async for step in _synthesize(prompt, len(ev.blocks)):
+        if isinstance(step, SynthesisDraft):
+            draft = step
+        else:
+            yield StageEvent(stage="synthesize", status="running", detail=step)
+    if draft is None:  # pragma: no cover - _synthesize raises instead
+        raise ValueError("synthesis produced no draft")
 
     draft, dropped = drop_unsourced_collisions(draft, ev.urls())
     ev.degraded.extend(dropped)

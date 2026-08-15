@@ -97,7 +97,21 @@ async def fake_stream(website, repo, form, name):
         await asyncio.sleep(0.25)
         yield StageEvent(stage=stage, status="done", detail=detail)
     yield StageEvent(stage="synthesize", status="running", detail="grok-4.6")
-    await asyncio.sleep(0.6)
+    # The sub-steps a live run reads off the model's own token stream, replayed
+    # so the demo shows the same texture rather than a minute of one line.
+    for note, chars in [
+        ("reading 12 evidence blocks", 0),
+        ("naming the product", 0),
+        ("describing what it does", 1240),
+        ("collecting its vocabulary", 2180),
+        ("sorting out name collisions", 3470),
+        ("scoring its own confidence", 4610),
+    ]:
+        detail = f"grok-4.6 · {note}"
+        if chars:
+            detail += f" · {chars / 1000:.1f}k chars"
+        yield StageEvent(stage="synthesize", status="running", detail=detail)
+        await asyncio.sleep(0.5)
     yield StageEvent(stage="synthesize", status="done")
     yield DossierEvent(dossier=_dossier())
 
