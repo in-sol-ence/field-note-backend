@@ -1,8 +1,13 @@
 import asyncio
 import json
-from dataclasses import asdict
+import re
+from collections import defaultdict
+from dataclasses import asdict, dataclass
+from typing import Literal
 
-from assets import Signal, SignalFindings
+from xai_sdk.tools import web_search, x_search
+
+from assets import Issue, LovedFeature, RecommendedFeature, Signal, SignalFindings
 from models import call_grok
 
 extract_signals_prompt = """
@@ -28,14 +33,87 @@ Signal:
 {signal_json}
 """.strip()
 
-merge_signals_prompt = ""
-validate_signals_prompt = ""
+merge_signals_prompt = """
+Merge duplicate findings in this batch. Two findings are duplicates only when
+they describe the same underlying product behavior and user need.
+
+Rules:
+- Preserve every signal_id from merged findings.
+- Never invent a signal_id or unsupported detail.
+- Keep distinct root causes separate, even if they share a product area.
+- Deduplicate evidence and keep only the strongest short quotes.
+- Use a short canonical title and a one-sentence canonical summary.
+- Return findings only in the supplied category; leave the other arrays empty.
+- Follow the structured output schema exactly.
+
+Category: {category}
+Product area: {product_area}
+Findings:
+{findings_json}
+""".strip()
+
+canonicalize_signals_prompt = """
+Make this compact list globally unique within its category and product area.
+Merge entries only when their canonical descriptions represent the same root
+problem, requested capability, or valued behavior.
+
+Rules:
+- Preserve the union of all signal_ids.
+- Never invent a signal_id.
+- Keep genuinely different user needs separate.
+- Produce a concise canonical title and one-sentence summary for every result.
+- Return findings only in the supplied category; leave the other arrays empty.
+- Follow the structured output schema exactly.
+
+Category: {category}
+Product area: {product_area}
+Canonical descriptions:
+{findings_json}
+""".strip()
+
+validate_signals_prompt = """
+Validate whether public source evidence actually supports this product finding.
+You must use the available web or X search tools to inspect the supplied source
+URLs and look for the original posts or reliable indexed copies.
+
+Rules:
+- Validate the specific claim, not merely whether the general topic exists.
+- A source supports the finding only when its content expresses the same
+  problem, requested capability, or valued behavior.
+- Do not treat likes, scores, reposts, or general popularity as claim support.
+- Return "unsupported" when accessible evidence contradicts or does not support
+  the finding.
+- Return "unverifiable" when the source cannot be accessed or reliably found.
+  Lack of search results is not proof that the finding is false.
+- Never invent sources or signal IDs.
+- Include only URLs actually inspected through search in sources.
+- Keep the explanation to one concise sentence.
+- Follow the structured output schema exactly.
+
+Finding:
+{finding_json}
+
+Signals claimed as evidence:
+{signals_json}
+""".strip()
+
+Finding = Issue | RecommendedFeature | LovedFeature
+BucketKey = tuple[str, str]
+
+
+@dataclass
+class ValidationResult:
+    finding_title: str
+    verdict: Literal["supported", "unsupported", "unverifiable"]
+    supported_signal_ids: list[str]
+    explanation: str
+    sources: list[str]
 
 async def analyze_signals(signals):                                                                                  
     findings: SignalFindings = await extract_findings(signals)                                                                       
     merged: SignalFindings = await merge_findings(findings)                                                                          
-    await validate(merged, signals)                                                                                        
-    return await rank(merged)  
+    await validate_issues(merged, signals)                                                                                        
+    return merged
 
 async def extract_issues(signals: list[Signal]) -> SignalFindings:
     """Extract findings with one concurrent Grok call per signal."""
@@ -63,11 +141,145 @@ async def extract_issues(signals: list[Signal]) -> SignalFindings:
     return findings
 
 
-def merge_issues(issues: SignalFindings) -> SignalFindings:
-    pass
+def _normalize_product_area(product_area: str) -> str:
+    """Create a stable key from differently formatted product-area labels."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", product_area.casefold())
+    return " ".join(normalized.split()) or "other"
 
-def validate_issues(issues: SignalFindings, signals: list[Signal]) -> None:
-    pass
 
-def rank_issues(issues: SignalFindings) -> SignalFindings:
-    pass
+def create_issue_buckets(
+    findings: SignalFindings,
+) -> dict[BucketKey, list[Finding]]:
+    """Bucket findings by category and normalized product area in O(n)."""
+    buckets: defaultdict[BucketKey, list[Finding]] = defaultdict(list)
+
+    for finding in findings.issues:
+        buckets[("issue", _normalize_product_area(finding.product_area))].append(
+            finding
+        )
+    for finding in findings.recommended_features:
+        buckets[("recommended_feature", _normalize_product_area(finding.product_area))].append(
+            finding
+        )
+    for finding in findings.loved_features:
+        buckets[("loved_feature", _normalize_product_area(finding.product_area))].append(
+            finding
+        )
+
+    return dict(buckets)
+
+
+def _compact_finding(finding: Finding) -> dict:
+    """Keep final deduplication prompts small."""
+    compact = {
+        "title": finding.title,
+        "summary": finding.summary,
+        "product_area": finding.product_area,
+        "signal_ids": finding.signal_ids,
+        "evidence": finding.evidence[:2],
+    }
+    if isinstance(finding, Issue):
+        compact.update(
+            severity=finding.severity,
+            suggested_action=finding.suggested_action,
+        )
+    elif isinstance(finding, RecommendedFeature):
+        compact.update(
+            priority=finding.priority,
+            suggested_action=finding.suggested_action,
+        )
+    return compact
+
+
+async def merge_issues(findings: SignalFindings) -> SignalFindings:
+    """Merge batches of four, then deduplicate their canonical descriptions."""
+    batch_calls = []
+    for (category, product_area), bucket in create_issue_buckets(findings).items():
+        for start in range(0, len(bucket), 4):
+            batch = bucket[start : start + 4]
+            batch_calls.append(
+                call_grok(
+                    merge_signals_prompt.format(
+                        category=category,
+                        product_area=product_area,
+                        findings_json=json.dumps(
+                            [asdict(finding) for finding in batch],
+                            ensure_ascii=False,
+                        ),
+                    ),
+                    SignalFindings,
+                )
+            )
+
+    batch_results = await asyncio.gather(*batch_calls)
+    first_pass = SignalFindings([], [], [])
+    for result in batch_results:
+        first_pass.issues.extend(result.issues)
+        first_pass.recommended_features.extend(result.recommended_features)
+        first_pass.loved_features.extend(result.loved_features)
+
+    canonical_calls = [
+        call_grok(
+            canonicalize_signals_prompt.format(
+                category=category,
+                product_area=product_area,
+                findings_json=json.dumps(
+                    [_compact_finding(finding) for finding in bucket],
+                    ensure_ascii=False,
+                ),
+            ),
+            SignalFindings,
+        )
+        for (category, product_area), bucket in create_issue_buckets(first_pass).items()
+    ]
+
+    canonical_results = await asyncio.gather(*canonical_calls)
+    merged = SignalFindings([], [], [])
+    for result in canonical_results:
+        merged.issues.extend(result.issues)
+        merged.recommended_features.extend(result.recommended_features)
+        merged.loved_features.extend(result.loved_features)
+    return merged
+
+def _compact_signal(signal: Signal) -> dict:
+    return {
+        "platform": signal.platform,
+        "signal_id": signal.signal_id,
+        "url": signal.url,
+        "title": signal.title,
+        "body": signal.body,
+        "author": signal.author,
+    }
+
+
+async def validate_issues(
+    findings: SignalFindings,
+    signals: list[Signal],
+) -> list[ValidationResult]:
+    """Validate every finding concurrently with Grok's search tools."""
+    signals_by_id = {signal.signal_id: signal for signal in signals}
+    all_findings: list[Finding] = [
+        *findings.issues,
+        *findings.recommended_features,
+        *findings.loved_features,
+    ]
+
+    calls = []
+    for finding in all_findings:
+        supporting_signals = [
+            _compact_signal(signals_by_id[signal_id])
+            for signal_id in finding.signal_ids
+            if signal_id in signals_by_id
+        ]
+        calls.append(
+            call_grok(
+                validate_signals_prompt.format(
+                    finding_json=json.dumps(asdict(finding), ensure_ascii=False),
+                    signals_json=json.dumps(supporting_signals, ensure_ascii=False),
+                ),
+                ValidationResult,
+                tools=[web_search(), x_search()],
+            )
+        )
+
+    return list(await asyncio.gather(*calls))
