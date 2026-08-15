@@ -27,8 +27,10 @@ from assets import Signal
 from schema import ProductDossier
 from x_signals import to_signals, tweets_to_signals
 
-# Repo root: field-note-backend/
-_BACKEND_ROOT = Path(__file__).resolve().parents[2]
+# Repo root: field-note-backend/. This file is scraping/x_providers.py, so
+# parents[1] is the repo; parents[2] was the directory above it, which sent
+# the bundled-submodule lookup one level too high and always missed.
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
 def default_x_scraper_root() -> Path:

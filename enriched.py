@@ -139,6 +139,20 @@ def _as_int(value: object) -> int:
         return 0
 
 
+def _citation_url(signal: Signal) -> str:
+    """Where a reader can actually find the quote.
+
+    A HackerNews signal's url is the submitted article, but the comments quoted
+    as evidence live on the HN item page. Citing the article sends the reader
+    to a page that does not contain the quote.
+    """
+    if signal.platform == "hackernews":
+        item = signal.raw.get("objectID") or signal.raw.get("story_id") or signal.signal_id
+        if item:
+            return f"https://news.ycombinator.com/item?id={item}"
+    return signal.url
+
+
 def _quote_appears_in(quote: str, signal: Signal) -> bool:
     haystack = " ".join(
         [signal.title or "", signal.body or ""]
@@ -162,7 +176,7 @@ def _resolve_evidence(
             EvidenceQuote(
                 quote=quote,
                 signal_id=source.signal_id,
-                url=source.url,
+                url=_citation_url(source),
                 author=source.author,
                 platform=source.platform,
                 channel=source.raw.get("subreddit") or source.raw.get("handle"),
