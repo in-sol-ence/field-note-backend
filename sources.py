@@ -15,6 +15,7 @@ around it deterministic — so a bad expansion is cheap to reproduce in a test:
 from __future__ import annotations
 
 import json
+import os
 import re
 
 from pydantic import ValidationError
@@ -165,20 +166,31 @@ def build_prompt(dossier: ProductDossier) -> str:
 
 
 async def select_targets(dossier: ProductDossier) -> ScrapeTargets:
-    """One Grok call. Raises on failure — the caller decides whether to degrade."""
-    from preprocess import _llm, get_settings
+    """One grok-4.6 call. Raises on failure — the caller decides whether to degrade.
 
-    client, s = _llm(), get_settings()
-    resp = await client.chat.completions.create(
-        model=s.llm_model,
-        messages=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": build_prompt(dossier)},
-        ],
-        response_format={"type": "json_object"},
-    )
-    raw = resp.choices[0].message.content or "{}"
+    Deliberately routed through models.call_grok rather than preprocess._llm:
+    that client honours LLM_BASE_URL/LLM_MODEL, so a gateway override would
+    quietly move source selection off Grok. This stage picks where a scrape
+    spends its budget and is the one that has to be Grok, so it is pinned.
+    """
+    from models import call_grok
+
+    _export_xai_key()
     try:
-        return clamp(ScrapeTargets.model_validate_json(raw))
+        return clamp(await call_grok(f"{_SYSTEM}\n\n{build_prompt(dossier)}", ScrapeTargets))
     except ValidationError as exc:
-        raise ValueError(f"source selection returned invalid JSON: {exc}") from exc
+        raise ValueError(f"source selection returned invalid targets: {exc}") from exc
+
+
+def _export_xai_key() -> None:
+    """Put XAI_API_KEY where the xAI SDK looks for it.
+
+    pydantic-settings reads .env into a Settings object without touching the
+    process environment, and models/grok.py reads os.environ directly — so a
+    key configured only in .env would raise KeyError here.
+    """
+    from preprocess import get_settings
+
+    key = get_settings().xai_api_key
+    if key and not os.environ.get("XAI_API_KEY"):
+        os.environ["XAI_API_KEY"] = key
