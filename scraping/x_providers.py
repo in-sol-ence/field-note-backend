@@ -35,9 +35,13 @@ def default_x_scraper_root() -> Path:
     env = os.environ.get("X_SCRAPER_ROOT", "").strip()
     if env:
         return Path(env).expanduser().resolve()
+    # Prefer the git submodule checked out inside this repo.
+    bundled = _BACKEND_ROOT / "x-scraper"
+    if (bundled / "main.py").is_file():
+        return bundled.resolve()
     sibling = _BACKEND_ROOT.parent / "x-scraper"
-    if sibling.is_dir():
-        return sibling
+    if (sibling / "main.py").is_file():
+        return sibling.resolve()
     return Path.home() / "x-scraper"
 
 

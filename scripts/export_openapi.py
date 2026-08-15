@@ -15,9 +15,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pydantic.json_schema import models_json_schema  # noqa: E402
 
-from schema import ErrorEvent, ProductDossier, ResultEvent, StageEvent  # noqa: E402
+from schema import (  # noqa: E402
+    DossierEvent,
+    ErrorEvent,
+    FieldNote,
+    Harvest,
+    HarvestEvent,
+    HeartbeatEvent,
+    Post,
+    ProductDossier,
+    ResultEvent,
+    ScrapeTargets,
+    StageEvent,
+)
 
-MODELS = (ProductDossier, StageEvent, ErrorEvent, ResultEvent)
+MODELS = (
+    ProductDossier,
+    ScrapeTargets,
+    Post,
+    Harvest,
+    FieldNote,
+    StageEvent,
+    ErrorEvent,
+    DossierEvent,
+    HarvestEvent,
+    HeartbeatEvent,
+    ResultEvent,
+)
 
 
 def build() -> dict:

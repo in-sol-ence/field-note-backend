@@ -56,6 +56,25 @@
         "title": "Disambiguation",
         "type": "object"
       },
+      "DossierEvent": {
+        "description": "T0 landed. Emitted before T1 starts so the CLI can render it during the\nminutes the scrape takes, rather than holding a finished dossier back.",
+        "properties": {
+          "event": {
+            "const": "dossier",
+            "default": "dossier",
+            "title": "Event",
+            "type": "string"
+          },
+          "dossier": {
+            "$ref": "#/components/schemas/ProductDossier"
+          }
+        },
+        "required": [
+          "dossier"
+        ],
+        "title": "DossierEvent",
+        "type": "object"
+      },
       "ErrorEvent": {
         "properties": {
           "event": {
@@ -74,7 +93,11 @@
                   "search_collisions",
                   "find_similar",
                   "search_context",
-                  "synthesize"
+                  "synthesize",
+                  "select_sources",
+                  "scrape_reddit",
+                  "scrape_hackernews",
+                  "map_posts"
                 ],
                 "type": "string"
               },
@@ -99,6 +122,119 @@
           "detail"
         ],
         "title": "ErrorEvent",
+        "type": "object"
+      },
+      "FieldNote": {
+        "description": "Everything the run produced. Grows a field per stage as T2-T5 land.",
+        "properties": {
+          "dossier": {
+            "$ref": "#/components/schemas/ProductDossier"
+          },
+          "harvest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Harvest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "dossier"
+        ],
+        "title": "FieldNote",
+        "type": "object"
+      },
+      "HackerNewsTargets": {
+        "properties": {
+          "search_queries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Search Queries",
+            "type": "array"
+          }
+        },
+        "title": "HackerNewsTargets",
+        "type": "object"
+      },
+      "Harvest": {
+        "description": "T1's result: the targets chosen, and what came back from them.",
+        "properties": {
+          "targets": {
+            "$ref": "#/components/schemas/ScrapeTargets"
+          },
+          "posts": {
+            "items": {
+              "$ref": "#/components/schemas/Post"
+            },
+            "title": "Posts",
+            "type": "array"
+          },
+          "live": {
+            "description": "True when posts came from a live scrape. False means the scraper was unreachable and fixtures were substituted.",
+            "title": "Live",
+            "type": "boolean"
+          },
+          "source_note": {
+            "title": "Source Note",
+            "type": "string"
+          },
+          "mapping_errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mapping Errors",
+            "type": "array"
+          }
+        },
+        "required": [
+          "targets",
+          "live",
+          "source_note"
+        ],
+        "title": "Harvest",
+        "type": "object"
+      },
+      "HarvestEvent": {
+        "properties": {
+          "event": {
+            "const": "harvest",
+            "default": "harvest",
+            "title": "Event",
+            "type": "string"
+          },
+          "harvest": {
+            "$ref": "#/components/schemas/Harvest"
+          }
+        },
+        "required": [
+          "harvest"
+        ],
+        "title": "HarvestEvent",
+        "type": "object"
+      },
+      "HeartbeatEvent": {
+        "description": "Keeps the connection and the UI alive across a multi-minute scrape.",
+        "properties": {
+          "event": {
+            "const": "heartbeat",
+            "default": "heartbeat",
+            "title": "Event",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "title": "Elapsed Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "elapsed_ms"
+        ],
+        "title": "HeartbeatEvent",
         "type": "object"
       },
       "Identity": {
@@ -273,6 +409,237 @@
         "title": "PackageRef",
         "type": "object"
       },
+      "Post": {
+        "description": "One scraped discussion, normalized across platforms by scraping/mapper.py.\n\nThis is the frozen contract T2 consumes. Field names match mapper.py's\noutput exactly \u2014 it is the producer, this is the schema for what it makes.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "reddit",
+              "x",
+              "hackernews",
+              "github"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Id"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Channel"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "body": {
+            "default": "",
+            "title": "Body",
+            "type": "string"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Author"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Created At"
+          },
+          "created_at_is_scrape_time": {
+            "default": false,
+            "title": "Created At Is Scrape Time",
+            "type": "boolean"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "num_comments": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Num Comments"
+          },
+          "comments": {
+            "items": {
+              "$ref": "#/components/schemas/PostComment"
+            },
+            "title": "Comments",
+            "type": "array"
+          },
+          "scraped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scraped At"
+          },
+          "search_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Search Query"
+          },
+          "language": {
+            "default": "en",
+            "title": "Language",
+            "type": "string"
+          },
+          "relevance": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Relevance"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "url"
+        ],
+        "title": "Post",
+        "type": "object"
+      },
+      "PostComment": {
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Author"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "depth": {
+            "default": 0,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          },
+          "is_op": {
+            "default": false,
+            "title": "Is Op",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "PostComment",
+        "type": "object"
+      },
       "ProductDossier": {
         "properties": {
           "identity": {
@@ -341,7 +708,29 @@
         "title": "Provenance",
         "type": "object"
       },
+      "RedditTargets": {
+        "description": "Where on Reddit this product is actually discussed.\n\nSubreddits alone miss most of it: in the reference scrape, 12 of 27 Reddit\nsignals came from site-wide search, in subreddits nobody would have listed\nup front. So queries carry at least as much weight as subreddits.",
+        "properties": {
+          "subreddits": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subreddits",
+            "type": "array"
+          },
+          "search_queries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Search Queries",
+            "type": "array"
+          }
+        },
+        "title": "RedditTargets",
+        "type": "object"
+      },
       "ResultEvent": {
+        "description": "Terminal event. Always last, always exactly one.",
         "properties": {
           "event": {
             "const": "result",
@@ -349,14 +738,40 @@
             "title": "Event",
             "type": "string"
           },
-          "dossier": {
-            "$ref": "#/components/schemas/ProductDossier"
+          "note": {
+            "$ref": "#/components/schemas/FieldNote"
           }
         },
         "required": [
-          "dossier"
+          "note"
         ],
         "title": "ResultEvent",
+        "type": "object"
+      },
+      "ScrapeTargets": {
+        "description": "T1's output: what to scrape, derived from the dossier's discriminator.",
+        "properties": {
+          "reddit": {
+            "$ref": "#/components/schemas/RedditTargets"
+          },
+          "hackernews": {
+            "$ref": "#/components/schemas/HackerNewsTargets"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Why these targets, in one or two sentences. Shown to the operator so a bad expansion is visible before budget is spent.",
+            "title": "Rationale"
+          }
+        },
+        "title": "ScrapeTargets",
         "type": "object"
       },
       "Source": {
@@ -404,7 +819,11 @@
               "search_collisions",
               "find_similar",
               "search_context",
-              "synthesize"
+              "synthesize",
+              "select_sources",
+              "scrape_reddit",
+              "scrape_hackernews",
+              "map_posts"
             ],
             "title": "Stage",
             "type": "string"
@@ -412,7 +831,8 @@
           "status": {
             "enum": [
               "running",
-              "done"
+              "done",
+              "failed"
             ],
             "title": "Status",
             "type": "string"

@@ -31,11 +31,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from schema import (
     Disambiguation,
+    DossierEvent,
     ErrorEvent,
     Event,
     ProductDossier,
     Provenance,
-    ResultEvent,
     Source,
     StageEvent,
     SynthesisDraft,
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     xai_api_key: str = ""
     llm_base_url: str = "https://api.x.ai/v1"
     llm_model: str = "grok-4.6"
+
+    # T1 scraping. Not in require_keys: an unreachable scraper degrades the run
+    # to recorded signals rather than ending it, so it is never a hard stop.
+    social_signals_url: str = "http://127.0.0.1:8899"
+    social_signals_api_key: str = "demo-key"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -694,7 +699,7 @@ async def preprocess_stream(
         ),
     )
     yield StageEvent(stage="synthesize", status="done")
-    yield ResultEvent(dossier=dossier)
+    yield DossierEvent(dossier=dossier)
 
 
 async def preprocess(
@@ -705,7 +710,7 @@ async def preprocess(
 ) -> ProductDossier:
     """Run T0 and return the finished dossier."""
     async for event in preprocess_stream(website, repo, form, name):
-        if isinstance(event, ResultEvent):
+        if isinstance(event, DossierEvent):
             return event.dossier
         if isinstance(event, ErrorEvent) and event.fatal:
             raise RuntimeError(event.detail)

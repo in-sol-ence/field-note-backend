@@ -218,3 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 APPEND_SYSTEM.MD
+# Pipeline output: scrapes, findings, reports. Regenerated per run.
+out/
