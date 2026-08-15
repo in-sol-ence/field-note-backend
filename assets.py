@@ -47,3 +47,43 @@ class Signal:
         return cls(**payload, engagement=Engagement(**engagement_data))
 
 
+@dataclass
+class Issue:
+    title: str
+    summary: str
+    product_area: str
+    severity: Literal["low", "medium", "high", "critical"]
+    signal_ids: list[str]
+    evidence: list[str]
+    suggested_action: str
+
+
+@dataclass
+class RecommendedFeature:
+    title: str
+    summary: str
+    product_area: str
+    priority: Literal["low", "medium", "high"]
+    signal_ids: list[str]
+    evidence: list[str]
+    suggested_action: str
+
+
+@dataclass
+class LovedFeature:
+    title: str
+    summary: str
+    product_area: str
+    signal_ids: list[str]
+    evidence: list[str]
+
+
+@dataclass
+class SignalFindings:
+    """One structured Grok response containing every finding category."""
+
+    issues: list[Issue]
+    recommended_features: list[RecommendedFeature]
+    loved_features: list[LovedFeature]
+
+
