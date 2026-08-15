@@ -117,13 +117,22 @@ def test_happy_path_produces_a_dossier(wired) -> None:
     assert dossier.provenance.field_confidence == {"what.category": 0.9}
 
 
-def test_ambiguity_reflects_unowned_share_of_the_namespace(wired) -> None:
+def test_ambiguity_counts_only_hits_on_identified_rivals(wired) -> None:
     dossier = _dossier(_run(website=SITE, name="Acme"))
 
-    # 3 of the 4 bare-name hits sit on domains Acme does not own. This must be
-    # measured on the UNFILTERED search: scoring the rival pass would report
-    # ~1.0 for every product on earth.
-    assert dossier.disambiguation.ambiguity_score == 0.75
+    # One collision, on wikipedia.org, matching 1 of the 4 bare-name hits.
+    # Measured on the UNFILTERED search: scoring the rival pass, which excludes
+    # the product's own domain by construction, would inflate every product.
+    assert dossier.disambiguation.ambiguity_score == 0.25
+
+
+def test_ambiguity_is_zero_when_no_collision_survives(wired) -> None:
+    wired["draft"] = _draft()  # model found nothing sharing the name
+
+    dossier = _dossier(_run(website=SITE, name="Acme"))
+
+    assert dossier.disambiguation.ambiguity_score == 0.0
+    assert dossier.disambiguation.name_collisions == []
 
 
 def test_collision_probe_runs_both_an_open_and_a_domain_excluded_search(wired) -> None:

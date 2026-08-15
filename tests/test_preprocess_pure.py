@@ -125,12 +125,25 @@ def test_partition_splits_owned_from_foreign() -> None:
     assert len(other) == 2
 
 
-def test_ambiguity_score_is_share_of_namespace_not_owned() -> None:
+def _collision(url: str, domain: str | None = None) -> NameCollision:
+    return NameCollision(name="x", what_it_is="y", evidence_url=url, domain=domain)
+
+
+def test_ambiguity_score_counts_hits_on_identified_rivals() -> None:
     urls = ["https://acme.dev/a", "https://other.org/b", "https://third.io/c"]
 
-    assert ambiguity_score(urls, ["acme.dev"]) == 0.667
-    assert ambiguity_score(urls, ["acme.dev", "other.org", "third.io"]) == 0.0
-    assert ambiguity_score([], ["acme.dev"]) == 0.0
+    both = [_collision("https://other.org/b"), _collision("https://third.io/c")]
+    assert ambiguity_score(urls, both) == 0.667
+    assert ambiguity_score(urls, [_collision("https://other.org/b")]) == 0.333
+
+
+def test_ambiguity_is_zero_when_nothing_shares_the_name() -> None:
+    # A product too new to rank for its own name owns none of these results.
+    # Scoring "not mine" would call that maximally contested; it is not.
+    urls = ["https://unrelated.org/a", "https://noise.io/b"]
+
+    assert ambiguity_score(urls, []) == 0.0
+    assert ambiguity_score([], [_collision("https://x.org/")]) == 0.0
 
 
 def _draft(*collisions: NameCollision) -> SynthesisDraft:

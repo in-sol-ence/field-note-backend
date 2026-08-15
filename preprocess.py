@@ -235,16 +235,31 @@ def partition_results(
     return mine, other
 
 
-def ambiguity_score(urls: Sequence[str], product_hosts: Iterable[str]) -> float:
-    """Share of the bare-name result space the product does *not* own.
+def collision_hosts(collisions: Iterable) -> set[str]:
+    """Registrable domains attributable to identified rivals."""
+    hosts = set()
+    for c in collisions:
+        if getattr(c, "evidence_url", ""):
+            hosts.add(registrable(host_of(c.evidence_url)))
+        if getattr(c, "domain", None):
+            hosts.add(registrable(str(c.domain).lower().removeprefix("www.")))
+    return {h for h in hosts if h}
 
-    Deliberately blunt: third-party coverage counts as ambiguity, because T2
-    still has to decide about those pages. 0.0 means the name is uncontested.
+
+def ambiguity_score(urls: Sequence[str], collisions: Iterable) -> float:
+    """Share of the bare-name result space taken by *identified* rivals.
+
+    Grounded in the observed collision list rather than in mere non-ownership.
+    Scoring "results that aren't mine" reads 1.00 for any product too new to
+    rank for its own name — maximally contested — when in truth nothing else
+    shares the name, and that would tell T2 to filter hard against a clean one.
+    A score can therefore never contradict the collision list.
     """
-    if not urls:
+    hosts = collision_hosts(collisions)
+    if not urls or not hosts:
         return 0.0
-    mine, other = partition_results(urls, product_hosts)
-    return round(len(other) / len(urls), 3)
+    hits = sum(1 for u in urls if registrable(host_of(u)) in hosts)
+    return round(hits / len(urls), 3)
 
 
 def drop_unsourced_collisions(
@@ -392,6 +407,14 @@ evidence. A collision you cannot cite must be omitted entirely.
 3. A name_collision is a DIFFERENT ENTITY that shares the name (a word, another \
 company, a game, a technical term) — never a competitor in the same category, \
 and never third-party coverage of this product.
+3a. The product's WHOLE name must appear in the collision. Direction matters:
+    - REJECT things matching only a fragment of the name. For "CodexIsland", \
+things called just "Codex" or just "Island" are not collisions — the product's \
+own vocabulary contains those words, so filtering on them would discard genuine \
+discussion of this very product.
+    - ACCEPT longer phrases that contain the whole name in an unrelated sense. \
+For "Linear", both "linear algebra" and "linear equation" qualify, because \
+someone searching the bare name is flooded with them.
 4. If the evidence does not support a field, use null or an empty list. Do not guess.
 5. feature_jargon should hold distinctive product-specific terms that would \
 rarely appear in unrelated text — these are the highest-value search keys.
@@ -500,9 +523,13 @@ async def preprocess_stream(
 
     sitemap: list[str] = []
     home_meta: dict = {}
-    results = await asyncio.gather(*(_labelled(s, c) for s, c in jobs))
 
-    for stage, value, err in results:
+    # as_completed, not gather: gather would hold every result until the
+    # slowest job lands, so the client would see all five stages finish at the
+    # same timestamp instead of watching them arrive.
+    tasks = [asyncio.create_task(_labelled(s, c)) for s, c in jobs]
+    for finished in asyncio.as_completed(tasks):
+        stage, value, err = await finished
         if err is not None:
             ev.degraded.append(f"{stage}: {err}")
             yield ErrorEvent(stage=stage, detail=str(err)[:300], fatal=False)  # type: ignore[arg-type]
@@ -567,13 +594,22 @@ async def preprocess_stream(
         yield StageEvent(stage="scrape_site", status="running", detail=f"{len(targets)} key pages")
     yield StageEvent(stage="search_context", status="running")
 
-    for stage, value, err in await asyncio.gather(*(_labelled(s, c) for s, c in phase2)):
+    pages_done = 0
+    phase2_tasks = [asyncio.create_task(_labelled(s, c)) for s, c in phase2]
+    for finished in asyncio.as_completed(phase2_tasks):
+        stage, value, err = await finished
         if err is not None:
             ev.degraded.append(f"{stage}: {err}")
             continue
         if stage.startswith("page:"):
             url = stage[5:]
             ev.add(f"Site page {url}", value, url, "firecrawl")
+            pages_done += 1
+            yield StageEvent(
+                stage="scrape_site",
+                status="running",
+                detail=f"{pages_done}/{len(targets)} key pages",
+            )
         elif stage == "manifest" and value:
             url, text = value
             ev.add("Dependency manifest (authoritative package name)", text, url, "http")
@@ -584,9 +620,13 @@ async def preprocess_stream(
                 f"exa:search:{guess_name} {context}",
                 "exa",
             )
+            yield StageEvent(
+                stage="search_context", status="done", detail=f"{len(value)} hits"
+            )
 
-    yield StageEvent(stage="scrape_site", status="done", detail=f"{len(ev.blocks)} evidence blocks")
-    yield StageEvent(stage="search_context", status="done")
+    yield StageEvent(
+        stage="scrape_site", status="done", detail=f"{len(ev.blocks)} evidence blocks"
+    )
 
     # ---- Stage D: synthesis --------------------------------------------
     yield StageEvent(stage="synthesize", status="running", detail=settings.llm_model)
@@ -595,14 +635,15 @@ async def preprocess_stream(
     draft, dropped = drop_unsourced_collisions(draft, ev.urls())
     ev.degraded.extend(dropped)
 
-    hosts = ev.hosts | {host_of(draft.identity.homepage or site)}
     dossier = ProductDossier(
         identity=draft.identity,
         what=draft.what,
         vocabulary=draft.vocabulary,
         disambiguation=Disambiguation(
             **draft.disambiguation.model_dump(),
-            ambiguity_score=ambiguity_score(ev.bare_name_urls, hosts),
+            ambiguity_score=ambiguity_score(
+                ev.bare_name_urls, draft.disambiguation.name_collisions
+            ),
         ),
         provenance=Provenance(
             sources=ev.sources,
