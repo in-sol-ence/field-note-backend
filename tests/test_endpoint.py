@@ -95,7 +95,17 @@ def test_missing_credentials_returns_503(monkeypatch) -> None:
     assert "EXA_API_KEY" in response.json()["detail"]
 
 
-def test_website_is_required() -> None:
-    response = client.post("/preprocess", json={})
+def test_website_or_repo_is_required() -> None:
+    assert client.post("/preprocess", json={}).status_code == 422
+    assert client.post("/preprocess", json={"website": "  ", "repo": ""}).status_code == 422
 
-    assert response.status_code == 422
+
+def test_repo_alone_is_enough(monkeypatch) -> None:
+    async def fake_stream(req):
+        yield DossierEvent(dossier=_dossier())
+
+    monkeypatch.setattr(main, "preflight", lambda: None)
+    monkeypatch.setattr(main, "run_stream", fake_stream)
+
+    with client.stream("POST", "/preprocess", json={"repo": "acme/acme"}) as r:
+        assert r.status_code == 200

@@ -57,14 +57,11 @@ def test_identity_requires_a_name() -> None:
         Identity(slug="acme")
 
 
-def test_only_website_is_required_on_the_request() -> None:
+def test_every_request_field_is_optional() -> None:
     req = PreprocessRequest(website="https://acme.dev")
-
     assert req.repo is None
     assert req.form is None
     assert req.name is None
 
-
-def test_request_rejects_a_missing_website() -> None:
-    with pytest.raises(ValidationError):
-        PreprocessRequest()
+    req = PreprocessRequest(repo="acme/acme")
+    assert req.website is None

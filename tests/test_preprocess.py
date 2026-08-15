@@ -119,6 +119,21 @@ def test_happy_path_produces_a_dossier(wired) -> None:
     assert dossier.provenance.field_confidence == {"what.category": 0.9}
 
 
+def test_repo_alone_produces_a_dossier(wired) -> None:
+    events = _run(website=None, repo="acme/acme")
+    dossier = _dossier(events)
+
+    assert dossier.identity.canonical_name == "Acme"
+    stages = {e.stage for e in events if isinstance(e, StageEvent)}
+    # nothing site-shaped is attempted without a site
+    assert "map" not in stages and "find_similar" not in stages
+    assert "scrape_repo" in stages and "search_collisions" in stages
+    # the repo name seeds the collision hunt, and no host is excluded
+    assert ("acme", None) in wired["searches"]
+    assert "WEBSITE:" not in wired["prompt"]
+    assert "GITHUB REPO: acme/acme" in wired["prompt"]
+
+
 def test_ambiguity_counts_only_hits_on_identified_rivals(wired) -> None:
     dossier = _dossier(_run(website=SITE, name="Acme"))
 

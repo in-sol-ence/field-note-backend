@@ -455,8 +455,12 @@ this product. negative_signals indicate it is NOT.
 Return a single JSON object. No markdown fence, no commentary."""
 
 
-def _build_prompt(name: str, website: str, repo: str | None, form: str | None, ev: Evidence) -> str:
-    parts = [f"PRODUCT NAME (as given): {name}", f"WEBSITE: {website}"]
+def _build_prompt(
+    name: str, website: str | None, repo: str | None, form: str | None, ev: Evidence
+) -> str:
+    parts = [f"PRODUCT NAME (as given): {name}"]
+    if website:
+        parts.append(f"WEBSITE: {website}")
     if repo:
         parts.append(f"GITHUB REPO: {repo}")
     if form:
@@ -615,20 +619,30 @@ def _context_terms(meta: dict, fallback: str) -> str:
 
 
 async def preprocess_stream(
-    website: str,
+    website: str | None,
     repo: str | None = None,
     form: str | None = None,
     name: str | None = None,
 ) -> AsyncIterator[Event]:
-    """Run T0, surfacing progress as each stage lands."""
+    """Run T0, surfacing progress as each stage lands.
+
+    Needs a website or a repo. With no website the run is repo-only: the
+    site-shaped stages (sitemap, homepage, similar sites) are skipped and the
+    repo name seeds the collision hunt.
+    """
     started = time.monotonic()
     settings = require_keys()  # fail before any spend
-    site = normalize_website(website)
+    site = normalize_website(website) if website and website.strip() else None
     repo_slug = normalize_repo(repo)
-    guess_name = (name or "").strip() or host_of(site).split(".")[0]
+    if not site and not repo_slug:
+        raise ValueError("website or repo is required")
+    guess_name = (name or "").strip() or (
+        host_of(site).split(".")[0] if site else repo_slug.split("/")[1]  # type: ignore[union-attr]
+    )
 
     ev = Evidence()
-    ev.hosts.add(host_of(site))
+    if site:
+        ev.hosts.add(host_of(site))
     if repo_slug:
         ev.hosts.add("github.com")
 
@@ -639,11 +653,18 @@ async def preprocess_stream(
     # are spawned the moment that job settles rather than after the slowest of
     # A — the searches and the page reads overlap instead of queueing.
     jobs: list[tuple[str, Awaitable]] = [
-        ("map", _map_site(site)),
-        ("scrape_site", _scrape_meta(site)),
-        ("search_collisions", _collision_probe(guess_name, host_of(site))),
-        ("find_similar", _exa_similar(site, n=8)),
+        ("search_collisions", _collision_probe(guess_name, host_of(site) if site else "")),
     ]
+    context = ""
+    if site:
+        jobs += [
+            ("map", _map_site(site)),
+            ("scrape_site", _scrape_meta(site)),
+            ("find_similar", _exa_similar(site, n=8)),
+        ]
+    else:
+        # No homepage metadata to seed the contextual search: the bare name goes.
+        jobs.append(("search_context", _exa_search(guess_name, n=8)))
     if repo_slug:
         jobs.append(("scrape_repo", _scrape(f"https://github.com/{repo_slug}")))
         jobs.append(("manifest", _fetch_manifest(repo_slug)))
@@ -652,6 +673,8 @@ async def preprocess_stream(
     for stage, _ in jobs:
         if stage in loud_stages:
             yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
+    if not site:
+        yield StageEvent(stage="search_context", status="running")
 
     targets: list[str] = []
     pages_done = 0
@@ -724,10 +747,11 @@ async def preprocess_stream(
                     url, text = value
                     ev.add("Dependency manifest (authoritative package name)", text, url, "http")
             elif stage == "search_context":
+                query = f"{guess_name} {context}".strip()
                 ev.add(
-                    f"Contextual search {guess_name + ' ' + context!r} (mostly the real product)",
+                    f"Contextual search {query!r} (mostly the real product)",
                     _fmt_hits(value),
-                    f"exa:search:{guess_name} {context}",
+                    f"exa:search:{query}",
                     "exa",
                 )
                 yield StageEvent(
@@ -760,7 +784,7 @@ async def preprocess_stream(
         ev.sources.append(Source(url=u, fetched_at=datetime.now(timezone.utc), via="exa"))
 
     # ---- coherence: do the website and repo describe the same product? ---
-    if repo_slug:
+    if site and repo_slug:
         site_text = " ".join(b for label, b in ev.blocks if "homepage" in label.lower())
         repo_text = " ".join(b for label, b in ev.blocks if "repository" in label.lower())
         if site_text and repo_text and not inputs_look_related(
@@ -815,7 +839,7 @@ async def preprocess_stream(
 
 
 async def preprocess(
-    website: str,
+    website: str | None,
     repo: str | None = None,
     form: str | None = None,
     name: str | None = None,

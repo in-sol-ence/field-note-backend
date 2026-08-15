@@ -18,9 +18,9 @@ from pydantic import BaseModel, Field
 
 
 class PreprocessRequest(BaseModel):
-    """Onboarding inputs. Only the website is required."""
+    """Onboarding inputs. At least one of website or repo is required."""
 
-    website: str
+    website: str | None = None
     name: str | None = None
     repo: str | None = None
     form: str | None = Field(

@@ -103,8 +103,8 @@ async def as_sse(events: AsyncIterator[Event]) -> AsyncIterator[str]:
 )
 async def run_preprocess(req: PreprocessRequest) -> StreamingResponse:
     """Run T0 product understanding, streaming progress as it goes."""
-    if not req.website or not req.website.strip():
-        raise HTTPException(status_code=422, detail="website is required")
+    if not (req.website or "").strip() and not (req.repo or "").strip():
+        raise HTTPException(status_code=422, detail="website or repo is required")
     try:
         preflight()  # fail before any spend, while we can still set a status
     except MissingCredentials as exc:

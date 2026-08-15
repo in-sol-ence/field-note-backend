@@ -97,7 +97,9 @@
                   "select_sources",
                   "scrape_reddit",
                   "scrape_hackernews",
-                  "map_posts"
+                  "map_posts",
+                  "extract_issues",
+                  "build_report"
                 ],
                 "type": "string"
               },
@@ -125,7 +127,7 @@
         "type": "object"
       },
       "FieldNote": {
-        "description": "Everything the run produced. Grows a field per stage as T2-T5 land.",
+        "description": "Everything the run produced. Grows a field per stage as T3-T5 land.",
         "properties": {
           "dossier": {
             "$ref": "#/components/schemas/ProductDossier"
@@ -140,6 +142,19 @@
               }
             ],
             "default": null
+          },
+          "report": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Report"
           }
         },
         "required": [
@@ -823,7 +838,9 @@
               "select_sources",
               "scrape_reddit",
               "scrape_hackernews",
-              "map_posts"
+              "map_posts",
+              "extract_issues",
+              "build_report"
             ],
             "title": "Stage",
             "type": "string"
