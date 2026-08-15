@@ -139,3 +139,75 @@ HackerNews:
 Reddit rate-limits after sustained scraping (`ERR_HTTP_RESPONSE_CODE_FAILURE`
 = a 429). Retry with backoff absorbs a single one. **Run once during a demo**
 and fall back to these files if a re-run is requested.
+
+---
+
+## Live scraping from the backend
+
+The demo scrapes live. `social-signals` runs as an HTTP service and the backend
+drives it over `POST /v1/jobs/watch`.
+
+### Start the service (on the machine holding the browser cookies)
+
+```bash
+cd /path/to/social-signals
+source .venv/bin/activate
+pip install -r requirements-api.txt
+SOCIAL_SIGNALS_API_KEY=demo-key SIGNALS_CONFIG=crispy-pancake \
+  python3 -m uvicorn social_signals.api.app:app --port 8899
+```
+
+### Call it with targets T1 generated
+
+`POST /v1/jobs/watch` takes targets **per request** — no config file needed, so
+a product T1 just discovered can be scraped immediately. It returns the signal
+objects inline rather than a filesystem path, so the caller does not need to
+share a disk with the scraper.
+
+```python
+import httpx, time
+
+H = {"Authorization": "Bearer demo-key"}
+job = httpx.post("http://127.0.0.1:8899/v1/jobs/watch", headers=H, json={
+    "platform": "reddit",
+    "per_target_limit": 15,
+    "targets": {
+        "reddit": {
+            "subreddits": ["perplexity_ai"],          # from T1
+            "search_queries": ["perplexity billing"],  # from T1
+            "sort": "top",
+            "time_filter": "month",
+            "fetch_bodies": True,
+            "fetch_bodies_limit": 10,
+            "comment_limit": 25,
+        }
+    },
+}).json()
+
+while True:
+    res = httpx.get(f"http://127.0.0.1:8899{job['poll_url']}", headers=H).json()
+    if res["status"] != "running":
+        break
+    time.sleep(3)
+
+signals = res["result"]["signals"]   # same shape as data/*.json
+```
+
+Request fields:
+
+| Field | Purpose |
+|---|---|
+| `targets` | deep-merged over the config's watch targets; this is T1's output |
+| `enable_platforms` | turn on a platform disabled in the base config (e.g. `hackernews`) |
+| `per_target_limit` | posts per subreddit / per query |
+| `include_signals` | `false` returns only a count and path |
+| `platform` | scrape one platform; omit for all enabled |
+
+### Timing
+
+Reddit takes **3-5 minutes** for 15 posts plus 10 detail fetches. HackerNews
+takes seconds. Poll, and stream progress to the UI — do not block a request on it.
+
+Existing endpoints (`/v1/jobs/watch-diff`, `/v1/jobs/scrape`) still return a
+filesystem path and a static config name; `/v1/jobs/watch` is the one to use
+for this pipeline.
