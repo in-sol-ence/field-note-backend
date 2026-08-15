@@ -30,6 +30,7 @@ from issues import analyze_results
 from preprocess import MissingCredentials, preprocess_stream, require_keys
 from schema import Event, PreprocessRequest, ProductDossier, ResultEvent
 from scraping.x_providers import scrape_x
+from analysis import run_t2_stream
 from harvest import harvest_stream
 from preprocess import MissingCredentials, preprocess_stream, require_keys
 from schema import (
@@ -39,6 +40,7 @@ from schema import (
     FieldNote,
     Harvest,
     HarvestEvent,
+    ReportEvent,
     PreprocessRequest,
     ProductDossier,
     ResultEvent,
@@ -117,6 +119,7 @@ async def run_stream(req: PreprocessRequest) -> AsyncIterator[Event]:
     """
     dossier: ProductDossier | None = None
     harvest: Harvest | None = None
+    report: dict | None = None
 
     async for event in run_t0_stream(req):
         if isinstance(event, DossierEvent):
@@ -133,7 +136,13 @@ async def run_stream(req: PreprocessRequest) -> AsyncIterator[Event]:
                 harvest = event.harvest
             yield event
 
-    yield ResultEvent(note=FieldNote(dossier=dossier, harvest=harvest))
+    if req.stop_after not in ("t0", "t1") and harvest and harvest.posts:
+        async for event in run_t2_stream(harvest, dossier.identity.canonical_name):
+            if isinstance(event, ReportEvent):
+                report = event.report
+            yield event
+
+    yield ResultEvent(note=FieldNote(dossier=dossier, harvest=harvest, report=report))
 
 
 async def run_t0(req: PreprocessRequest) -> ProductDossier:

@@ -23,10 +23,15 @@ class Engagement:
     replies: int | None = None
     retweets: int | None = None
 
+    # HackerNews fields. Algolia reports points and a comment count rather
+    # than a score and a thread, so these cannot reuse the Reddit names.
+    points: int | None = None
+    num_comments: int | None = None
+
 
 @dataclass
 class Signal:
-    platform: Literal["reddit", "x"]
+    platform: Literal["reddit", "x", "hackernews"]
     signal_id: str
     url: str
     title: str

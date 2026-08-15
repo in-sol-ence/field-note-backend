@@ -8,7 +8,7 @@ generated structs. Treat field renames here as breaking changes.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -27,7 +27,7 @@ class PreprocessRequest(BaseModel):
         default=None,
         description="Free-text detail form. Treated as trusted, high-weight context.",
     )
-    stop_after: Literal["t0", "t1"] = Field(
+    stop_after: Literal["t0", "t1", "t2"] = Field(
         default="t1",
         description="Last stage to run. 't0' returns the dossier without scraping.",
     )
@@ -224,10 +224,14 @@ class Harvest(BaseModel):
 
 
 class FieldNote(BaseModel):
-    """Everything the run produced. Grows a field per stage as T2-T5 land."""
+    """Everything the run produced. Grows a field per stage as T3-T5 land."""
 
     dossier: ProductDossier
     harvest: Harvest | None = None
+    # T2's clustered findings, shaped for the dashboard. A plain dict because
+    # enriched.py owns the shape and re-declaring it here would give two
+    # definitions to keep in step.
+    report: dict[str, Any] | None = None
 
 
 # --------------------------------------------------------------------------
@@ -247,6 +251,9 @@ Stage = Literal[
     "scrape_reddit",
     "scrape_hackernews",
     "map_posts",
+    # T2
+    "extract_issues",
+    "build_report",
 ]
 
 
@@ -287,6 +294,14 @@ class HeartbeatEvent(BaseModel):
     elapsed_ms: int
 
 
+class ReportEvent(BaseModel):
+    """T2's findings, emitted as soon as they are built so the dashboard can
+    render before the run formally ends."""
+
+    event: Literal["report"] = "report"
+    report: dict[str, Any]
+
+
 class ResultEvent(BaseModel):
     """Terminal event. Always last, always exactly one."""
 
@@ -295,5 +310,11 @@ class ResultEvent(BaseModel):
 
 
 Event = (
-    StageEvent | ErrorEvent | DossierEvent | HarvestEvent | HeartbeatEvent | ResultEvent
+    StageEvent
+    | ErrorEvent
+    | DossierEvent
+    | HarvestEvent
+    | HeartbeatEvent
+    | ReportEvent
+    | ResultEvent
 )
