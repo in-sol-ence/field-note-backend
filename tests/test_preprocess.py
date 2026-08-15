@@ -65,7 +65,12 @@ def wired(monkeypatch):
     async def fake_scrape(url):
         return f"content of {url}"
 
-    async def fake_search(query, n=10):
+    async def fake_search(query, n=10, exclude_domains=None):
+        state.setdefault("searches", []).append((query, exclude_domains))
+        if exclude_domains:
+            # the rival pass: product-owned hits are filtered out server-side
+            owned = set(exclude_domains)
+            return [h for h in BARE_HITS if not any(o in h[0] for o in owned)]
         return BARE_HITS
 
     async def fake_similar(url, n=10):
@@ -115,8 +120,32 @@ def test_happy_path_produces_a_dossier(wired) -> None:
 def test_ambiguity_reflects_unowned_share_of_the_namespace(wired) -> None:
     dossier = _dossier(_run(website=SITE, name="Acme"))
 
-    # 3 of the 4 bare-name hits sit on domains Acme does not own
+    # 3 of the 4 bare-name hits sit on domains Acme does not own. This must be
+    # measured on the UNFILTERED search: scoring the rival pass would report
+    # ~1.0 for every product on earth.
     assert dossier.disambiguation.ambiguity_score == 0.75
+
+
+def test_collision_probe_runs_both_an_open_and_a_domain_excluded_search(wired) -> None:
+    _run(website=SITE, name="Acme")
+
+    bare_name = [s for s in wired["searches"] if s[0] == "Acme"]
+    assert len(bare_name) == 2, "expected an unfiltered pass and a rival pass"
+    assert {s[1] is None for s in bare_name} == {True, False}
+    assert ["acme.dev"] in [s[1] for s in bare_name]
+
+
+def test_rival_hits_are_citable_so_the_guard_does_not_drop_them(wired) -> None:
+    real = NameCollision(
+        name="Acme Bank",
+        what_it_is="a bank",
+        evidence_url="https://acmebank.example/",
+    )
+    wired["draft"] = _draft(real)
+
+    dossier = _dossier(_run(website=SITE, name="Acme"))
+
+    assert [c.name for c in dossier.disambiguation.name_collisions] == ["Acme Bank"]
 
 
 def test_stream_reports_stages_and_ends_with_result(wired) -> None:

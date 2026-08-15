@@ -87,6 +87,25 @@ def test_host_and_registrable_collapse_subdomains() -> None:
     assert registrable(host_of("https://docs.acme.dev/x")) == "acme.dev"
 
 
+def test_registrable_does_not_merge_unrelated_multi_part_tlds() -> None:
+    # Collapsing both to "co.uk" would read two unrelated companies as one
+    # owner, and a real collision would be filtered out as product-owned.
+    assert registrable("shop.co.uk") != registrable("other.co.uk")
+    assert registrable("exa.com.sa") == "exa.com.sa"
+    assert registrable("exa.net.uk") == "exa.net.uk"
+    assert registrable("docs.acme.co.uk") == "acme.co.uk"
+    assert registrable("localhost") == "localhost"
+
+
+def test_collision_on_a_multi_part_tld_is_not_suppressed() -> None:
+    urls = ["https://acme.co.uk/a", "https://rival.co.uk/b"]
+
+    mine, other = partition_results(urls, ["acme.co.uk"])
+
+    assert mine == ["https://acme.co.uk/a"]
+    assert other == ["https://rival.co.uk/b"]
+
+
 def test_slugify() -> None:
     assert slugify("  Field Note!! ") == "field-note"
     assert slugify("!!!") == "product"

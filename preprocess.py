@@ -49,9 +49,13 @@ from schema import (
 class Settings(BaseSettings):
     firecrawl_api_key: str = ""
     exa_api_key: str = ""
+
+    # XAI_API_KEY is the team-wide name, shared with models/grok.py. Override
+    # LLM_BASE_URL/LLM_MODEL to borrow an OpenAI-compatible gateway; clearing
+    # the overrides restores grok-4.6.
     xai_api_key: str = ""
-    grok_model: str = "grok-4.6"
-    xai_base_url: str = "https://api.x.ai/v1"
+    llm_base_url: str = "https://api.x.ai/v1"
+    llm_model: str = "grok-4.6"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -93,11 +97,11 @@ def _exa():
     return AsyncExa(get_settings().exa_api_key)
 
 
-def _grok():
+def _llm():
     from openai import AsyncOpenAI
 
     s = get_settings()
-    return AsyncOpenAI(api_key=s.xai_api_key, base_url=s.xai_base_url)
+    return AsyncOpenAI(api_key=s.xai_api_key, base_url=s.llm_base_url)
 
 
 # --------------------------------------------------------------------------
@@ -171,10 +175,28 @@ def host_of(url: str) -> str:
         return ""
 
 
+# Two-part public suffixes common enough to matter. Not the full Public Suffix
+# List, which would mean a network-fetched dependency; enough that two unrelated
+# .co.uk sites are not read as one owner, which would suppress a real collision.
+_MULTI_PART_TLDS = frozenset({
+    "ac.uk", "co.uk", "gov.uk", "me.uk", "net.uk", "org.uk",
+    "com.au", "net.au", "org.au", "co.nz", "co.za", "co.il", "co.in",
+    "co.jp", "ne.jp", "or.jp", "co.kr", "co.th", "co.id", "co.ke",
+    "com.ar", "com.bd", "com.br", "com.cn", "com.eg", "com.hk", "com.mx",
+    "com.my", "com.ng", "com.pk", "com.ph", "com.pl", "com.sa", "com.sg",
+    "com.tr", "com.tw", "com.ua", "com.vn", "net.in", "org.in",
+})
+
+
 def registrable(hostname: str) -> str:
-    """Cheap eTLD+1. Good enough to treat docs.foo.com and foo.com as one owner."""
+    """eTLD+1, so docs.foo.com and foo.com read as one owner but foo.co.uk and
+    bar.co.uk do not."""
     parts = hostname.split(".")
-    return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
+    if len(parts) < 2:
+        return hostname
+    if len(parts) >= 3 and ".".join(parts[-2:]) in _MULTI_PART_TLDS:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
 
 
 def score_url(url: str) -> int:
@@ -316,8 +338,10 @@ async def _fetch_manifest(repo: str) -> tuple[str, str] | None:
     return None
 
 
-async def _exa_search(query: str, n: int = 10) -> list[tuple[str, str, str]]:
-    res = await _exa().search(query, num_results=n)
+async def _exa_search(
+    query: str, n: int = 10, exclude_domains: list[str] | None = None
+) -> list[tuple[str, str, str]]:
+    res = await _exa().search(query, num_results=n, exclude_domains=exclude_domains or None)
     return [
         (r.url, getattr(r, "title", "") or "", (getattr(r, "text", "") or "")[:400])
         for r in res.results
@@ -330,6 +354,23 @@ async def _exa_similar(url: str, n: int = 10) -> list[tuple[str, str, str]]:
         (r.url, getattr(r, "title", "") or "", (getattr(r, "text", "") or "")[:300])
         for r in res.results
     ]
+
+
+async def _collision_probe(
+    name: str, product_host: str
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+    """Two searches, because one cannot answer both questions.
+
+    Exa's neural search resolves a bare product name to its dominant entity, so
+    the unfiltered pass measures how much of the name space the product owns
+    (that is the ambiguity score) but buries every namesake. Excluding the
+    product's own domain is what surfaces the rivals worth labelling.
+    """
+    namespace, rivals = await asyncio.gather(
+        _exa_search(name, n=12),
+        _exa_search(name, n=10, exclude_domains=[product_host] if product_host else None),
+    )
+    return namespace, rivals
 
 
 def _fmt_hits(hits: Sequence[tuple[str, str, str]]) -> str:
@@ -378,7 +419,7 @@ def _build_prompt(name: str, website: str, repo: str | None, form: str | None, e
 
 async def _synthesize(prompt: str) -> SynthesisDraft:
     """One call, then at most one repair seeded with the validation error."""
-    client, s = _grok(), get_settings()
+    client, s = _llm(), get_settings()
     messages = [
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": prompt},
@@ -386,7 +427,7 @@ async def _synthesize(prompt: str) -> SynthesisDraft:
     last_err: Exception | None = None
     for attempt in range(2):
         resp = await client.chat.completions.create(
-            model=s.grok_model,
+            model=s.llm_model,
             messages=messages,
             response_format={"type": "json_object"},
         )
@@ -448,7 +489,7 @@ async def preprocess_stream(
     jobs: list[tuple[str, Awaitable]] = [
         ("map", _map_site(site)),
         ("scrape_site", _scrape_meta(site)),
-        ("search_collisions", _exa_search(guess_name, n=12)),
+        ("search_collisions", _collision_probe(guess_name, host_of(site))),
         ("find_similar", _exa_similar(site, n=8)),
     ]
     if repo_slug:
@@ -477,16 +518,31 @@ async def preprocess_stream(
             ev.add("GitHub repository page", value, f"https://github.com/{repo_slug}", "firecrawl")
             yield StageEvent(stage="scrape_repo", status="done", detail=repo_slug or "")
         elif stage == "search_collisions":
-            ev.bare_name_urls = [u for u, _, _ in value]
+            namespace, rivals = value
+            ev.bare_name_urls = [u for u, _, _ in namespace]
             ev.add(
-                f"Open-web search for the bare name {guess_name!r} "
-                "(some of these are OTHER things sharing the name)",
-                _fmt_hits(value),
+                f"Open-web search for the bare name {guess_name!r} — who owns this name",
+                _fmt_hits(namespace),
                 f"exa:search:{guess_name}",
                 "exa",
             )
+            ev.add(
+                f"Same search with {host_of(site)} excluded. These are the strongest "
+                "NAME COLLISION candidates: anything here that is a different entity "
+                "(a word, a company, a technical term) belongs in name_collisions",
+                _fmt_hits(rivals),
+                f"exa:search:{guess_name}:rivals",
+                "exa",
+            )
+            # rival URLs must be citable or the guard will drop their collisions
+            for u, _, _ in rivals:
+                ev.sources.append(
+                    Source(url=u, fetched_at=datetime.now(timezone.utc), via="exa")
+                )
             yield StageEvent(
-                stage="search_collisions", status="done", detail=f"{len(value)} hits"
+                stage="search_collisions",
+                status="done",
+                detail=f"{len(namespace)} namespace, {len(rivals)} rival hits",
             )
         elif stage == "find_similar":
             ev.add("Semantically adjacent products", _fmt_hits(value), f"exa:similar:{site}", "exa")
@@ -533,7 +589,7 @@ async def preprocess_stream(
     yield StageEvent(stage="search_context", status="done")
 
     # ---- Stage D: synthesis --------------------------------------------
-    yield StageEvent(stage="synthesize", status="running", detail=settings.grok_model)
+    yield StageEvent(stage="synthesize", status="running", detail=settings.llm_model)
     draft = await _synthesize(_build_prompt(guess_name, site, repo_slug, form, ev))
 
     draft, dropped = drop_unsourced_collisions(draft, ev.urls())
