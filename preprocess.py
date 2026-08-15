@@ -632,7 +632,12 @@ async def preprocess_stream(
     if repo_slug:
         ev.hosts.add("github.com")
 
-    # ---- Stage A: ground truth + collision hunt, all at once -------------
+    # ---- Stages A+B: one task pool, no barrier between them --------------
+    # Stage A is the ground truth + collision hunt; Stage B is the deep read
+    # of the pages A's sitemap surfaces plus a contextual search seeded by the
+    # homepage metadata. B's jobs each depend on exactly one A job, so they
+    # are spawned the moment that job settles rather than after the slowest of
+    # A — the searches and the page reads overlap instead of queueing.
     jobs: list[tuple[str, Awaitable]] = [
         ("map", _map_site(site)),
         ("scrape_site", _scrape_meta(site)),
@@ -641,63 +646,114 @@ async def preprocess_stream(
     ]
     if repo_slug:
         jobs.append(("scrape_repo", _scrape(f"https://github.com/{repo_slug}")))
+        jobs.append(("manifest", _fetch_manifest(repo_slug)))
 
+    loud_stages = {"map", "scrape_site", "search_collisions", "find_similar", "scrape_repo"}
     for stage, _ in jobs:
-        yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
+        if stage in loud_stages:
+            yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
 
-    sitemap: list[str] = []
-    home_meta: dict = {}
+    targets: list[str] = []
+    pages_done = 0
 
-    # as_completed, not gather: gather would hold every result until the
-    # slowest job lands, so the client would see all five stages finish at the
-    # same timestamp instead of watching them arrive.
-    tasks = [asyncio.create_task(_labelled(s, c)) for s, c in jobs]
-    for finished in asyncio.as_completed(tasks):
-        stage, value, err = await finished
-        if err is not None:
-            ev.degraded.append(f"{stage}: {err}")
-            yield ErrorEvent(stage=stage, detail=str(err)[:300], fatal=False)  # type: ignore[arg-type]
-            continue
-        if stage == "map":
-            sitemap = value
-            yield StageEvent(stage="map", status="done", detail=f"{len(sitemap)} pages found")
-        elif stage == "scrape_site":
-            markdown, home_meta = value
-            ev.add("Product homepage", markdown, site, "firecrawl")
-            yield StageEvent(stage="scrape_site", status="done", detail=site)
-        elif stage == "scrape_repo":
-            ev.add("GitHub repository page", value, f"https://github.com/{repo_slug}", "firecrawl")
-            yield StageEvent(stage="scrape_repo", status="done", detail=repo_slug or "")
-        elif stage == "search_collisions":
-            namespace, rivals = value
-            ev.bare_name_urls = [u for u, _, _ in namespace]
-            ev.add(
-                f"Open-web search for the bare name {guess_name!r} — who owns this name",
-                _fmt_hits(namespace),
-                f"exa:search:{guess_name}",
-                "exa",
-            )
-            ev.add(
-                f"Same search with {host_of(site)} excluded. These are the strongest "
-                "NAME COLLISION candidates: anything here that is a different entity "
-                "(a word, a company, a technical term) belongs in name_collisions",
-                _fmt_hits(rivals),
-                f"exa:search:{guess_name}:rivals",
-                "exa",
-            )
-            # rival URLs must be citable or the guard will drop their collisions
-            for u, _, _ in rivals:
-                ev.sources.append(
-                    Source(url=u, fetched_at=datetime.now(timezone.utc), via="exa")
+    # asyncio.wait, not gather: each result is handled (and reported) as it
+    # lands, and handling one may spawn the follow-up jobs that depend on it.
+    pending = {asyncio.create_task(_labelled(s, c)) for s, c in jobs}
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            stage, value, err = task.result()
+            if err is not None:
+                ev.degraded.append(f"{stage}: {err}")
+                if stage in loud_stages:
+                    yield ErrorEvent(stage=stage, detail=str(err)[:300], fatal=False)  # type: ignore[arg-type]
+            elif stage == "map":
+                yield StageEvent(stage="map", status="done", detail=f"{len(value)} pages found")
+            elif stage == "scrape_site":
+                markdown, home_meta = value
+                ev.add("Product homepage", markdown, site, "firecrawl")
+                yield StageEvent(stage="scrape_site", status="done", detail=site)
+            elif stage == "scrape_repo":
+                ev.add(
+                    "GitHub repository page", value, f"https://github.com/{repo_slug}", "firecrawl"
                 )
-            yield StageEvent(
-                stage="search_collisions",
-                status="done",
-                detail=f"{len(namespace)} namespace, {len(rivals)} rival hits",
-            )
-        elif stage == "find_similar":
-            ev.add("Semantically adjacent products", _fmt_hits(value), f"exa:similar:{site}", "exa")
-            yield StageEvent(stage="find_similar", status="done", detail=f"{len(value)} hits")
+                yield StageEvent(stage="scrape_repo", status="done", detail=repo_slug or "")
+            elif stage == "search_collisions":
+                namespace, rivals = value
+                ev.bare_name_urls = [u for u, _, _ in namespace]
+                ev.add(
+                    f"Open-web search for the bare name {guess_name!r} — who owns this name",
+                    _fmt_hits(namespace),
+                    f"exa:search:{guess_name}",
+                    "exa",
+                )
+                ev.add(
+                    f"Same search with {host_of(site)} excluded. These are the strongest "
+                    "NAME COLLISION candidates: anything here that is a different entity "
+                    "(a word, a company, a technical term) belongs in name_collisions",
+                    _fmt_hits(rivals),
+                    f"exa:search:{guess_name}:rivals",
+                    "exa",
+                )
+                # rival URLs must be citable or the guard will drop their collisions
+                for u, _, _ in rivals:
+                    ev.sources.append(
+                        Source(url=u, fetched_at=datetime.now(timezone.utc), via="exa")
+                    )
+                yield StageEvent(
+                    stage="search_collisions",
+                    status="done",
+                    detail=f"{len(namespace)} namespace, {len(rivals)} rival hits",
+                )
+            elif stage == "find_similar":
+                ev.add(
+                    "Semantically adjacent products", _fmt_hits(value), f"exa:similar:{site}", "exa"
+                )
+                yield StageEvent(stage="find_similar", status="done", detail=f"{len(value)} hits")
+            elif stage.startswith("page:"):
+                url = stage[5:]
+                ev.add(f"Site page {url}", value, url, "firecrawl")
+                pages_done += 1
+                yield StageEvent(
+                    stage="scrape_site",
+                    status="running",
+                    detail=f"{pages_done}/{len(targets)} key pages",
+                )
+            elif stage == "manifest":
+                if value:
+                    url, text = value
+                    ev.add("Dependency manifest (authoritative package name)", text, url, "http")
+            elif stage == "search_context":
+                ev.add(
+                    f"Contextual search {guess_name + ' ' + context!r} (mostly the real product)",
+                    _fmt_hits(value),
+                    f"exa:search:{guess_name} {context}",
+                    "exa",
+                )
+                yield StageEvent(
+                    stage="search_context", status="done", detail=f"{len(value)} hits"
+                )
+
+            # Follow-ups: the page reads need only the sitemap, the contextual
+            # search only the homepage metadata — spawn each as soon as its one
+            # dependency settles, error or not.
+            if stage == "map":
+                targets = rank_sitemap_urls(value or [] if err is None else [], limit=5)
+                if targets:
+                    yield StageEvent(
+                        stage="scrape_site", status="running", detail=f"{len(targets)} key pages"
+                    )
+                    pending |= {
+                        asyncio.create_task(_labelled(f"page:{t}", _scrape(t))) for t in targets
+                    }
+            elif stage == "scrape_site":
+                context = _context_terms(home_meta if err is None else {}, guess_name)
+                yield StageEvent(stage="search_context", status="running")
+                pending.add(
+                    asyncio.create_task(
+                        _labelled("search_context", _exa_search(f"{guess_name} {context}", n=8))
+                    )
+                )
 
     # collision evidence URLs must be citable
     for u in ev.bare_name_urls:
@@ -716,51 +772,6 @@ async def preprocess_stream(
             )
             ev.degraded.append(warning)
             yield ErrorEvent(stage="scrape_repo", detail=warning, fatal=False)
-
-    # ---- Stage B+C: deep read and contextual search, in parallel ---------
-    targets = rank_sitemap_urls(sitemap, limit=5)
-    context = _context_terms(home_meta, guess_name)
-
-    phase2: list[tuple[str, Awaitable]] = [
-        (f"page:{t}", _scrape(t)) for t in targets
-    ]
-    phase2.append(("search_context", _exa_search(f"{guess_name} {context}", n=8)))
-    if repo_slug:
-        phase2.append(("manifest", _fetch_manifest(repo_slug)))
-
-    if targets:
-        yield StageEvent(stage="scrape_site", status="running", detail=f"{len(targets)} key pages")
-    yield StageEvent(stage="search_context", status="running")
-
-    pages_done = 0
-    phase2_tasks = [asyncio.create_task(_labelled(s, c)) for s, c in phase2]
-    for finished in asyncio.as_completed(phase2_tasks):
-        stage, value, err = await finished
-        if err is not None:
-            ev.degraded.append(f"{stage}: {err}")
-            continue
-        if stage.startswith("page:"):
-            url = stage[5:]
-            ev.add(f"Site page {url}", value, url, "firecrawl")
-            pages_done += 1
-            yield StageEvent(
-                stage="scrape_site",
-                status="running",
-                detail=f"{pages_done}/{len(targets)} key pages",
-            )
-        elif stage == "manifest" and value:
-            url, text = value
-            ev.add("Dependency manifest (authoritative package name)", text, url, "http")
-        elif stage == "search_context":
-            ev.add(
-                f"Contextual search {guess_name + ' ' + context!r} (mostly the real product)",
-                _fmt_hits(value),
-                f"exa:search:{guess_name} {context}",
-                "exa",
-            )
-            yield StageEvent(
-                stage="search_context", status="done", detail=f"{len(value)} hits"
-            )
 
     yield StageEvent(
         stage="scrape_site", status="done", detail=f"{len(ev.blocks)} evidence blocks"

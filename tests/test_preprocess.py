@@ -354,3 +354,43 @@ def test_a_stream_that_dies_mid_draft_is_not_retried_blind(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="stream_unsupported"):
         asyncio.run(go())
+
+
+def test_page_reads_do_not_wait_for_the_slowest_stage_a_job(wired, monkeypatch) -> None:
+    """The deep read depends only on the sitemap, so it must start while the
+    other stage-A jobs are still in flight. find_similar refuses to finish
+    until a page has been scraped: under a stage barrier this deadlocks."""
+    page_scraped = asyncio.Event()
+
+    async def fake_scrape(url):
+        page_scraped.set()
+        return f"content of {url}"
+
+    async def fake_similar(url, n=10):
+        await asyncio.wait_for(page_scraped.wait(), timeout=2)
+        return [("https://rival.example/", "Rival", "competitor")]
+
+    monkeypatch.setattr(preprocess, "_scrape", fake_scrape)
+    monkeypatch.setattr(preprocess, "_exa_similar", fake_similar)
+
+    events = _run(website=SITE, name="Acme")
+
+    assert isinstance(events[-1], DossierEvent)
+    done = {e.stage for e in events if isinstance(e, StageEvent) and e.status == "done"}
+    assert "find_similar" in done
+
+
+def test_contextual_search_still_runs_when_the_homepage_scrape_fails(
+    wired, monkeypatch
+) -> None:
+    async def broken_scrape_meta(url):
+        raise RuntimeError("homepage unreachable")
+
+    monkeypatch.setattr(preprocess, "_scrape_meta", broken_scrape_meta)
+
+    events = _run(website=SITE, name="Acme")
+
+    done = {e.stage for e in events if isinstance(e, StageEvent) and e.status == "done"}
+    assert "search_context" in done
+    # with no metadata the query falls back to the bare name
+    assert ("Acme Acme", None) in wired["searches"]

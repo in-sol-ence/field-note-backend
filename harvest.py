@@ -143,7 +143,6 @@ async def _run_watch(
 
         started = time.monotonic()
         while True:
-            await asyncio.sleep(POLL_INTERVAL)
             waited = time.monotonic() - started
             if waited > POLL_TIMEOUT:
                 raise ScrapeUnavailable(f"{platform} scrape exceeded {POLL_TIMEOUT:.0f}s")
@@ -154,6 +153,7 @@ async def _run_watch(
 
             if res.get("status") == "running":
                 yield waited
+                await asyncio.sleep(POLL_INTERVAL)
                 continue
 
             result = res.get("result") or {}
@@ -189,65 +189,105 @@ async def _collect(
             )
 
 
+async def _platform_stream(
+    platform: str,
+    targets: ScrapeTargets,
+    per_target_limit: int,
+    allow_fixtures: bool,
+    started: float,
+) -> AsyncIterator[Any]:
+    """One platform, start to finish: progress events, then one final
+    (signals, degraded_notes, live) tuple."""
+    stage = f"scrape_{platform}"
+    yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
+
+    degraded: list[str] = []
+    got: list[dict[str, Any]] | None = None
+    try:
+        async for item in _collect(platform, targets, per_target_limit, started):
+            if isinstance(item, list):
+                got = item
+            else:
+                yield item
+    except ScrapeUnavailable as exc:
+        degraded.append(f"{stage}: {exc}")
+        yield ErrorEvent(stage=stage, detail=str(exc)[:300], fatal=False)  # type: ignore[arg-type]
+
+    if got:
+        yield StageEvent(
+            stage=stage,  # type: ignore[arg-type]
+            status="done",
+            detail=f"{len(got)} signals",
+        )
+        yield (got, degraded, True)
+        return
+
+    # Nothing live. Fall back, loudly.
+    fixture = load_fixtures(platform) if allow_fixtures else []
+    if not fixture:
+        yield StageEvent(stage=stage, status="failed", detail="no signals")  # type: ignore[arg-type]
+        yield ([], degraded, True)
+        return
+    note = (
+        f"{stage}: substituted {len(fixture)} recorded signals from "
+        f"{FIXTURES[platform].name} — these are about Perplexity, not this product"
+    )
+    degraded.append(note)
+    yield ErrorEvent(stage=stage, detail=note, fatal=False)  # type: ignore[arg-type]
+    yield StageEvent(
+        stage=stage,  # type: ignore[arg-type]
+        status="done",
+        detail=f"{len(fixture)} recorded signals (fallback)",
+    )
+    yield (fixture, degraded, False)
+
+
 async def harvest_stream(
     targets: ScrapeTargets,
     *,
     per_target_limit: int = 15,
     allow_fixtures: bool = True,
 ) -> AsyncIterator[Event]:
-    """Scrape every platform with targets, then emit one HarvestEvent."""
+    """Scrape every platform with targets, concurrently, then emit one
+    HarvestEvent. Reddit alone takes 3-5 minutes; HackerNews answers in
+    seconds — running them in sequence would bill the run for both."""
     started = time.monotonic()
     signals: list[dict[str, Any]] = []
     degraded: list[str] = []
     live = True
 
-    for platform in ("reddit", "hackernews"):
-        if not has_targets(platform, targets):
-            continue
-        stage = f"scrape_{platform}"
-        yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
+    platforms = [p for p in ("reddit", "hackernews") if has_targets(p, targets)]
 
-        got: list[dict[str, Any]] | None = None
+    # The platform streams run as tasks feeding one queue, so their progress
+    # events interleave on the wire in the order they actually happen.
+    queue: asyncio.Queue[Event | None] = asyncio.Queue()
+
+    async def pump(platform: str) -> tuple[list[dict[str, Any]], list[str], bool]:
         try:
-            async for item in _collect(platform, targets, per_target_limit, started):
-                if isinstance(item, list):
-                    got = item
-                else:
-                    yield item
-        except ScrapeUnavailable as exc:
-            degraded.append(f"{stage}: {exc}")
-            yield ErrorEvent(stage=stage, detail=str(exc)[:300], fatal=False)  # type: ignore[arg-type]
+            async for item in _platform_stream(
+                platform, targets, per_target_limit, allow_fixtures, started
+            ):
+                if isinstance(item, tuple):
+                    return item
+                await queue.put(item)
+            return [], [], True  # pragma: no cover - the stream always ends in a tuple
+        finally:
+            await queue.put(None)
 
-        if got:
-            signals += got
-            yield StageEvent(
-                stage=stage,  # type: ignore[arg-type]
-                status="done",
-                detail=f"{len(got)} signals",
-            )
-            continue
+    tasks = [asyncio.create_task(pump(p)) for p in platforms]
+    remaining = len(tasks)
+    while remaining:
+        item = await queue.get()
+        if item is None:
+            remaining -= 1
+        else:
+            yield item
 
-        # Nothing live. Fall back, loudly.
-        if not allow_fixtures:
-            yield StageEvent(stage=stage, status="failed", detail="no signals")  # type: ignore[arg-type]
-            continue
-        fixture = load_fixtures(platform)
-        if not fixture:
-            yield StageEvent(stage=stage, status="failed", detail="no signals")  # type: ignore[arg-type]
-            continue
-        live = False
-        signals += fixture
-        note = (
-            f"{stage}: substituted {len(fixture)} recorded signals from "
-            f"{FIXTURES[platform].name} — these are about Perplexity, not this product"
-        )
-        degraded.append(note)
-        yield ErrorEvent(stage=stage, detail=note, fatal=False)  # type: ignore[arg-type]
-        yield StageEvent(
-            stage=stage,  # type: ignore[arg-type]
-            status="done",
-            detail=f"{len(fixture)} recorded signals (fallback)",
-        )
+    for task in tasks:  # re-raise anything unexpected, in platform order
+        got, notes, was_live = await task
+        signals += got
+        degraded += notes
+        live = live and was_live
 
     yield StageEvent(stage="map_posts", status="running")
     posts, errors = to_posts(signals)
