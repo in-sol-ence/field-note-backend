@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
-from preprocess import MissingCredentials, preprocess_stream, require_keys
+from pipeline import MissingCredentials, preflight, run_t0_stream
 from schema import ErrorEvent, Event, PreprocessRequest
 
 app = FastAPI(
@@ -68,12 +68,12 @@ async def run_preprocess(req: PreprocessRequest) -> StreamingResponse:
     if not req.website or not req.website.strip():
         raise HTTPException(status_code=422, detail="website is required")
     try:
-        require_keys()  # fail before any spend, while we can still set a status
+        preflight()  # fail before any spend, while we can still set a status
     except MissingCredentials as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return StreamingResponse(
-        as_sse(preprocess_stream(req.website, req.repo, req.form, req.name)),
+        as_sse(run_t0_stream(req)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

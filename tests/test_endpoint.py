@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import main
 from main import app
-from preprocess import MissingCredentials, Settings
+from pipeline import MissingCredentials
 from schema import (
     Disambiguation,
     Identity,
@@ -32,10 +32,6 @@ def _dossier() -> ProductDossier:
     )
 
 
-def _ok_keys():
-    return Settings(firecrawl_api_key="k", exa_api_key="k", xai_api_key="k")
-
-
 def _parse(body: str) -> list[tuple[str, dict]]:
     events = []
     for chunk in body.strip().split("\n\n"):
@@ -47,12 +43,12 @@ def _parse(body: str) -> list[tuple[str, dict]]:
 
 
 def test_stream_frames_stage_events_then_result(monkeypatch) -> None:
-    async def fake_stream(website, repo, form, name):
+    async def fake_stream(req):
         yield StageEvent(stage="map", status="done", detail="3 pages found")
         yield ResultEvent(dossier=_dossier())
 
-    monkeypatch.setattr(main, "require_keys", _ok_keys)
-    monkeypatch.setattr(main, "preprocess_stream", fake_stream)
+    monkeypatch.setattr(main, "preflight", lambda: None)
+    monkeypatch.setattr(main, "run_t0_stream", fake_stream)
 
     with client.stream("POST", "/preprocess", json={"website": "https://acme.dev"}) as r:
         assert r.status_code == 200
@@ -65,12 +61,12 @@ def test_stream_frames_stage_events_then_result(monkeypatch) -> None:
 
 
 def test_midstream_failure_becomes_a_fatal_event(monkeypatch) -> None:
-    async def boom(website, repo, form, name):
+    async def boom(req):
         yield StageEvent(stage="map", status="running")
         raise RuntimeError("grok fell over")
 
-    monkeypatch.setattr(main, "require_keys", _ok_keys)
-    monkeypatch.setattr(main, "preprocess_stream", boom)
+    monkeypatch.setattr(main, "preflight", lambda: None)
+    monkeypatch.setattr(main, "run_t0_stream", boom)
 
     with client.stream("POST", "/preprocess", json={"website": "https://acme.dev"}) as r:
         events = _parse("".join(r.iter_text()))
@@ -85,7 +81,7 @@ def test_missing_credentials_returns_503(monkeypatch) -> None:
     def missing():
         raise MissingCredentials("missing required env var(s): EXA_API_KEY")
 
-    monkeypatch.setattr(main, "require_keys", missing)
+    monkeypatch.setattr(main, "preflight", missing)
 
     response = client.post("/preprocess", json={"website": "https://acme.dev"})
 

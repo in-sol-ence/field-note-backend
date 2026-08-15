@@ -56,10 +56,30 @@ curl -N -X POST localhost:8000/preprocess \
   -d '{"website":"https://cursor.com","repo":"getcursor/cursor"}'
 ```
 
+## Layering
+
+| File | Owns |
+|---|---|
+| `main.py` | HTTP: validation, SSE framing, status codes |
+| `pipeline.py` | Which stages run, in what order |
+| `preprocess.py` | The T0 implementation |
+| `schema.py` | Contracts |
+
+Every route goes through `pipeline.py`, so `main.py` never imports a stage
+directly. Adding T1-T5 is a change in `pipeline.py` alone — their events join
+the same stream and neither the HTTP layer nor the CLI has to change to pick
+them up.
+
+```python
+from pipeline import run_t0          # -> ProductDossier
+from pipeline import run_t0_stream   # -> AsyncIterator[Event]
+from pipeline import preflight       # credential check, before any spend
+```
+
 ## How T0 works
 
-`preprocess.py` owns the whole stage and knows nothing about HTTP, so it is
-callable directly:
+`preprocess.py` owns the whole stage and knows nothing about HTTP, so it stays
+callable directly in tests and notebooks:
 
 ```python
 from preprocess import preprocess          # -> ProductDossier
