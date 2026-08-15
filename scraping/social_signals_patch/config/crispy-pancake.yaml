@@ -33,12 +33,21 @@ watch:
       fetch_bodies_limit: 10
       comment_limit: 25
     x:
+      # Provider for field-note's POST /scrape/x (not social-signals itself):
+      #   x-scraper      — local Playwright checkout (X_SCRAPER_ROOT)
+      #   social-signals — remote HTTP watch job
+      #   fixture        — load Signal/tweet JSON (offline demo)
+      provider: x-scraper
       # Deep-merge keeps default.yaml's accounts unless we blank them, and
       # those accounts flood the run with generic AI chatter, not product
       # complaints. The T1 agent must set accounts explicitly, never inherit.
       accounts: []
       search_queries:
         - "perplexity bug OR broken OR issue"
+      count: 20
+      result_type: Latest
+      # Offline demos: provider: fixture + path to Signal JSON
+      # fixture_path: data/signals_openclaw_x.json
     hackernews:
       search_queries:
         - "perplexity"
