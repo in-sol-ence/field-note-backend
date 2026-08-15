@@ -1,6 +1,7 @@
 """Pipeline behaviour with every network source mocked out."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,9 +80,10 @@ def wired(monkeypatch):
     async def fake_manifest(repo):
         return (f"https://raw.githubusercontent.com/{repo}/HEAD/package.json", '{"name":"acme"}')
 
-    async def fake_synth(prompt):
+    async def fake_synth(prompt, blocks):
         state["prompt"] = prompt
-        return state["draft"]
+        yield f"fake-model · drafting from {blocks} evidence blocks"
+        yield state["draft"]
 
     monkeypatch.setattr(preprocess, "require_keys", lambda: Settings(
         firecrawl_api_key="k", exa_api_key="k", xai_api_key="k"
@@ -165,6 +167,19 @@ def test_stream_reports_stages_and_ends_with_result(wired) -> None:
     assert {"map", "scrape_site", "search_collisions", "synthesize"} <= done
 
 
+def test_synthesis_reports_what_it_is_waiting_on(wired) -> None:
+    """Synthesis is the run's longest single wait, so it has to say more than
+    its own name while the model is thinking."""
+    events = _run(website=SITE, name="Acme")
+
+    notes = [
+        e.detail
+        for e in events
+        if isinstance(e, StageEvent) and e.stage == "synthesize" and e.status == "running"
+    ]
+    assert any(n and "drafting" in n for n in notes), notes
+
+
 def test_map_failure_degrades_instead_of_dying(wired) -> None:
     wired["map"] = RuntimeError("firecrawl exploded")
 
@@ -207,3 +222,135 @@ def test_missing_credentials_fails_before_any_spend(monkeypatch) -> None:
         _run(website=SITE, name="Acme")
 
     assert "FIRECRAWL_API_KEY" in str(exc.value)
+
+
+# ---- synthesis, streamed -------------------------------------------------
+
+
+def _fake_llm(text: str, size: int = 9):
+    """A client whose completion streams `text` back in fixed-size chunks."""
+
+    async def create(**kwargs):
+        assert kwargs["stream"], "synthesis must stream or it cannot report progress"
+
+        async def chunks():
+            for i in range(0, len(text), size):
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=text[i : i + size]))]
+                )
+            # Providers close with a usage-only chunk carrying no choices.
+            yield SimpleNamespace(choices=[])
+
+        return chunks()
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def _synth(monkeypatch, text: str):
+    monkeypatch.setattr(preprocess, "_llm", lambda: _fake_llm(text))
+    monkeypatch.setattr(preprocess, "get_settings", lambda: Settings(
+        firecrawl_api_key="k", exa_api_key="k", xai_api_key="k"
+    ))
+
+    async def go():
+        return [step async for step in preprocess._synthesize(text, blocks=12)]
+
+    return asyncio.run(go())
+
+
+def test_synthesis_narrates_the_draft_as_the_model_writes_it(monkeypatch) -> None:
+    """The run's longest wait has to keep saying what it is on. Streaming is
+    what makes that possible: the sub-steps are the draft's own sections."""
+    steps = _synth(monkeypatch, _draft(REAL_COLLISION).model_dump_json())
+
+    assert isinstance(steps[-1], SynthesisDraft), "the draft still has to arrive whole"
+    notes = [s for s in steps if isinstance(s, str)]
+    assert notes[0] == "grok-4.6 · reading 12 evidence blocks"
+    assert any("naming the product" in n for n in notes), notes
+    assert any("sorting out name collisions" in n for n in notes), notes
+    # The point of the exercise: the line the operator reads keeps changing.
+    assert len(set(notes)) >= 4, notes
+
+
+def test_a_malformed_draft_says_it_is_repairing_rather_than_going_quiet(monkeypatch) -> None:
+    with pytest.raises(ValueError, match="after repair"):
+        _synth(monkeypatch, '{"identity": {"canonical_name": "Acme"}}')
+
+
+def test_the_repair_pass_is_announced(monkeypatch) -> None:
+    notes = []
+    monkeypatch.setattr(preprocess, "_llm", lambda: _fake_llm('{"identity": {}}'))
+    monkeypatch.setattr(preprocess, "get_settings", lambda: Settings(
+        firecrawl_api_key="k", exa_api_key="k", xai_api_key="k"
+    ))
+
+    async def go():
+        async for step in preprocess._synthesize("prompt", blocks=3):
+            notes.append(step)
+
+    with pytest.raises(ValueError):
+        asyncio.run(go())
+    assert any("repairing the schema" in n for n in notes), notes
+
+
+def _no_stream_llm(text: str, fail_after: int = 0):
+    """A client that refuses to stream, or dies `fail_after` chunks in, and
+    answers the plain request normally."""
+
+    async def create(**kwargs):
+        if not kwargs.get("stream"):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
+            )
+
+        async def chunks():
+            for i in range(fail_after):
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=text[i : i + 1]))]
+                )
+            raise RuntimeError("stream_unsupported: response_format with stream")
+
+        if fail_after:
+            return chunks()
+        raise RuntimeError("stream_unsupported: response_format with stream")
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def _settings(monkeypatch) -> None:
+    monkeypatch.setattr(preprocess, "get_settings", lambda: Settings(
+        firecrawl_api_key="k", exa_api_key="k", xai_api_key="k"
+    ))
+
+
+def test_a_provider_that_will_not_stream_still_produces_a_dossier(monkeypatch) -> None:
+    """The notes are a nicety, the dossier is the product: losing progress text
+    must not lose the run."""
+    text = _draft(REAL_COLLISION).model_dump_json()
+    monkeypatch.setattr(preprocess, "_llm", lambda: _no_stream_llm(text))
+    _settings(monkeypatch)
+
+    async def go():
+        return [step async for step in preprocess._synthesize(text, blocks=12)]
+
+    steps = asyncio.run(go())
+
+    assert isinstance(steps[-1], SynthesisDraft)
+    notes = [s for s in steps if isinstance(s, str)]
+    # And it says so, with the reason — a silent fallback is the blind minute
+    # this whole change exists to remove.
+    assert any("drafting blind" in n and "stream_unsupported" in n for n in notes), notes
+
+
+def test_a_stream_that_dies_mid_draft_is_not_retried_blind(monkeypatch) -> None:
+    # Half a draft already cost half the tokens. Paying again for the same
+    # call is worse than surfacing the failure.
+    text = _draft(REAL_COLLISION).model_dump_json()
+    monkeypatch.setattr(preprocess, "_llm", lambda: _no_stream_llm(text, fail_after=20))
+    _settings(monkeypatch)
+
+    async def go():
+        return [step async for step in preprocess._synthesize(text, blocks=12)]
+
+    with pytest.raises(RuntimeError, match="stream_unsupported"):
+        asyncio.run(go())
