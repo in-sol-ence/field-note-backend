@@ -11,7 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from assets import Signal
-from issues import analyze_signals
+from issues import analyze_with_validation
 
 
 def is_quotable(signal: Signal) -> bool:
@@ -42,14 +42,11 @@ async def main() -> None:
     print(f"analyzing {len(signals)} signals from {src}")
 
     started = time.monotonic()
-    result = await analyze_signals(signals)
+    result = await analyze_with_validation(signals)
     elapsed = time.monotonic() - started
 
-    # analyze_signals returns SignalFindings today; an AnalysisResult carrying
-    # validations is the richer shape. Accept both so this script does not break
-    # whichever way issues.py lands.
-    findings = getattr(result, "findings", result)
-    validations = getattr(result, "validations", [])
+    findings = result.findings
+    validations = result.validations
     print(
         f"\n{elapsed:.0f}s | issues={len(findings.issues)} "
         f"features={len(findings.recommended_features)} "

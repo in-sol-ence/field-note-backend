@@ -137,7 +137,9 @@ async def run_stream(req: PreprocessRequest) -> AsyncIterator[Event]:
             yield event
 
     if req.stop_after not in ("t0", "t1") and harvest and harvest.posts:
-        async for event in run_t2_stream(harvest, dossier.identity.canonical_name):
+        async for event in run_t2_stream(
+            harvest, dossier.identity.canonical_name, dossier
+        ):
             if isinstance(event, ReportEvent):
                 report = event.report
             yield event

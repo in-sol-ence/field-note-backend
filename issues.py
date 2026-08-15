@@ -129,6 +129,19 @@ class ValidationResult:
     sources: list[str]
 
 
+@dataclass
+class AnalysisResult:
+    """Findings plus the verdicts on them.
+
+    validate_issues has always run; its results were awaited and dropped, so
+    every finding reached the dashboard marked unvalidated even though a
+    verdict had been computed and paid for.
+    """
+
+    findings: SignalFindings
+    validations: list[ValidationResult]
+
+
 def _dossier_json(dossier: ProductDossier | None) -> str:
     """Serialize product context for every Grok stage."""
     if dossier is None:
@@ -136,31 +149,39 @@ def _dossier_json(dossier: ProductDossier | None) -> str:
     return dossier.model_dump_json(exclude_none=True)
 
 
-async def analyze_results(
-    signals: list[Signal], dossier: ProductDossier
-) -> SignalFindings:
-    """Analyze scraper results in the context of the preprocessed product."""
+async def analyze_with_validation(
+    signals: list[Signal], dossier: ProductDossier | None = None
+) -> AnalysisResult:
+    """Extract, merge, then validate — keeping the verdicts.
+
+    Validation runs against the merged findings because merge rewrites titles,
+    and finding_title is the only key tying a verdict back to a finding.
+    """
     if not isinstance(signals, list) or any(not isinstance(s, Signal) for s in signals):
         raise TypeError("scraper results must be a list of assets.Signal objects")
 
     findings = await extract_issues(signals, dossier)
     merged = await merge_issues(findings, dossier)
-    await validate_issues(merged, signals, dossier)
-    return merged
+    validations = await validate_issues(merged, signals, dossier)
+    return AnalysisResult(findings=merged, validations=validations)
+
+
+async def analyze_results(
+    signals: list[Signal], dossier: ProductDossier
+) -> SignalFindings:
+    """Analyze scraper results in the context of the preprocessed product.
+
+    Returns findings only. Callers that want the verdicts should use
+    analyze_with_validation.
+    """
+    return (await analyze_with_validation(signals, dossier)).findings
 
 
 async def analyze_signals(
     signals: list[Signal], dossier: ProductDossier | None = None
 ) -> SignalFindings:
     """Legacy entry point; new pipeline code should call ``analyze_results``."""
-    if dossier is None:
-        # Preserve the standalone fixture visualizer. Production orchestration
-        # always uses analyze_results, where dossier is required.
-        findings = await extract_issues(signals, None)
-        merged = await merge_issues(findings, None)
-        await validate_issues(merged, signals, None)
-        return merged
-    return await analyze_results(signals, dossier)
+    return (await analyze_with_validation(signals, dossier)).findings
 
 
 async def extract_issues(

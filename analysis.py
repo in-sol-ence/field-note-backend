@@ -68,9 +68,15 @@ def is_quotable(signal: Signal) -> bool:
     return any((c.body or "").strip() for c in signal.engagement.comments)
 
 
-async def run_t2_stream(harvest: Harvest, product: str) -> AsyncIterator[Event]:
-    """Cluster the harvest into findings and store the dashboard report."""
-    from issues import analyze_signals
+async def run_t2_stream(
+    harvest: Harvest, product: str, dossier: Any = None
+) -> AsyncIterator[Event]:
+    """Cluster the harvest into findings and store the dashboard report.
+
+    The dossier is passed through so every model stage can tell the product
+    from a namesake.
+    """
+    from issues import analyze_with_validation
 
     signals = [Signal.from_dict(post_to_signal(p)) for p in harvest.posts]
     quotable = [s for s in signals if is_quotable(s)]
@@ -89,15 +95,13 @@ async def run_t2_stream(harvest: Harvest, product: str) -> AsyncIterator[Event]:
 
     started = time.monotonic()
     try:
-        result = await analyze_signals(quotable)
+        result = await analyze_with_validation(quotable, dossier)
     except Exception as exc:  # noqa: BLE001 - T2 failing must not lose T0/T1's work
         yield ErrorEvent(stage="extract_issues", detail=f"T2 failed: {exc}"[:400], fatal=False)
         return
 
-    # analyze_signals returns SignalFindings today and may return an
-    # AnalysisResult carrying validations. Accept both.
-    findings = getattr(result, "findings", result)
-    validations = getattr(result, "validations", [])
+    findings = result.findings
+    validations = result.validations
     elapsed = int(time.monotonic() - started)
     yield StageEvent(
         stage="extract_issues",
