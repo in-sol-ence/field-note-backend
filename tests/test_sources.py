@@ -1,6 +1,9 @@
-"""T1 source selection. Pure parts only — no network."""
+"""T1 source selection: the pure parts, and which model it routes to."""
 
+import asyncio
+import os
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -119,3 +122,70 @@ def test_prompt_omits_sections_it_has_no_data_for() -> None:
     )
     assert "DISTINCTIVE JARGON" not in prompt
     assert "NAME COLLISIONS" not in prompt
+
+
+# --------------------------------------------------------------------------
+# Which model actually runs
+# --------------------------------------------------------------------------
+
+
+def test_selection_goes_through_grok_not_the_overridable_client(monkeypatch) -> None:
+    """The hackathon requires Grok to be load-bearing, and this is the stage
+    that decides where the whole scrape budget goes.
+
+    preprocess._llm honours LLM_BASE_URL/LLM_MODEL, so routing through it means
+    a gateway override silently moves source selection off Grok — which is
+    exactly the bug this guards.
+    """
+    import models
+    import preprocess
+    import sources
+
+    seen = {}
+
+    async def fake_call_grok(prompt, output_type, **kw):
+        seen["prompt"], seen["type"], seen["model"] = prompt, output_type, kw.get("model", "grok-4.6")
+        return ScrapeTargets(reddit=RedditTargets(subreddits=["r/cursor"]))
+
+    def forbidden():
+        raise AssertionError("source selection must not use the overridable client")
+
+    monkeypatch.setattr(models, "call_grok", fake_call_grok)
+    monkeypatch.setattr(preprocess, "_llm", forbidden)
+    monkeypatch.setenv("XAI_API_KEY", "test-key")
+
+    got = asyncio.run(sources.select_targets(_dossier()))
+
+    assert seen["type"] is ScrapeTargets
+    assert seen["model"] == "grok-4.6"
+    assert "database cursor" in seen["prompt"], "the collisions must reach the model"
+    # and the answer is still budget-capped and normalized
+    assert got.reddit.subreddits == ["cursor"]
+
+
+def test_the_env_key_reaches_the_xai_sdk(monkeypatch) -> None:
+    """models/grok.py reads os.environ directly, but pydantic-settings loads
+    .env into a Settings object without touching the environment."""
+    import preprocess
+    import sources
+
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        preprocess, "get_settings", lambda: SimpleNamespace(xai_api_key="from-dot-env")
+    )
+
+    sources._export_xai_key()
+    assert os.environ["XAI_API_KEY"] == "from-dot-env"
+
+
+def test_an_already_exported_key_wins(monkeypatch) -> None:
+    import preprocess
+    import sources
+
+    monkeypatch.setenv("XAI_API_KEY", "from-the-shell")
+    monkeypatch.setattr(
+        preprocess, "get_settings", lambda: SimpleNamespace(xai_api_key="from-dot-env")
+    )
+
+    sources._export_xai_key()
+    assert os.environ["XAI_API_KEY"] == "from-the-shell"
