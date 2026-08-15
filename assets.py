@@ -80,8 +80,6 @@ class LovedFeature:
 
 @dataclass
 class SignalFindings:
-    """One structured Grok response containing every finding category."""
-
     issues: list[Issue]
     recommended_features: list[RecommendedFeature]
     loved_features: list[LovedFeature]
