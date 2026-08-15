@@ -1,0 +1,49 @@
+# crispy-pancake hackathon vertical — product-signal scraping across sources.
+# Watch targets are placeholders; the T1 agent rewrites them per product.
+extends: default.yaml
+
+guardrails:
+  platforms:
+    # Zero-auth source: no cookies, no login, no rate-limit approval.
+    hackernews:
+      enabled: true
+    # bluesky has an adapter but is not wired into `watch` yet — leave off.
+
+scrape:
+  # default is 8, which is too few to cluster issues from.
+  per_target_limit: 15
+
+watch:
+  targets:
+    reddit:
+      subreddits:
+        - perplexity_ai
+      # `top` over a month surfaces recurring complaints; `hot` only shows
+      # whatever is busy in the last few hours.
+      sort: top
+      time_filter: month
+      # Site-wide search catches complaints in subs with no product community.
+      search_queries:
+        - "perplexity bug OR broken OR billing OR cancel"
+      search_sort: relevance
+      search_time: month
+      # Second pass: open each permalink for body + comment threads. Without
+      # this the T2 agent clusters headlines and can quote no evidence.
+      fetch_bodies: true
+      fetch_bodies_limit: 10
+      comment_limit: 25
+    x:
+      # Deep-merge keeps default.yaml's accounts unless we blank them, and
+      # those accounts flood the run with generic AI chatter, not product
+      # complaints. The T1 agent must set accounts explicitly, never inherit.
+      accounts: []
+      search_queries:
+        - "perplexity bug OR broken OR issue"
+    hackernews:
+      search_queries:
+        - "perplexity"
+      # Algolia search hits carry comment counts but no comment text; this
+      # second call fetches the threads that hold the actual complaints.
+      fetch_comments: true
+      fetch_comments_limit: 8
+      comment_limit: 25

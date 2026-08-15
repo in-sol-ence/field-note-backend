@@ -1,0 +1,285 @@
+[
+  {
+    "platform": "reddit",
+    "signal_id": "https://www.reddit.com/r/perplexity_ai/comments/1a2b3c/pro_search_keeps_dropping_my_uploaded_pdf/",
+    "url": "https://www.reddit.com/r/perplexity_ai/comments/1a2b3c/pro_search_keeps_dropping_my_uploaded_pdf/",
+    "title": "Pro Search keeps dropping my uploaded PDF mid-thread",
+    "body": "Uploaded a 40 page PDF, asked three follow ups, and by the fourth question it says it can't see the file. Have to re-upload every single time. Happens on web and iOS.",
+    "author": "Typical_Yogurt_9500",
+    "score": "412",
+    "engagement": {
+      "score": "412",
+      "comments": [
+        {
+          "author": "u/mgrantham",
+          "body": "Same here. Started for me around the beginning of the month.",
+          "score": "44"
+        },
+        {
+          "author": "u/lena_k",
+          "body": "Workaround is pasting the text inline but that defeats the point.",
+          "score": "17"
+        }
+      ]
+    },
+    "scraped_at": "2026-08-15T16:56:35.662799+00:00",
+    "raw": {
+      "url": "https://www.reddit.com/r/perplexity_ai/comments/1a2b3c/pro_search_keeps_dropping_my_uploaded_pdf/",
+      "title": "Pro Search keeps dropping my uploaded PDF mid-thread",
+      "author": "Typical_Yogurt_9500",
+      "subreddit": "r/perplexity_ai",
+      "score": "412",
+      "comments_count": "87",
+      "body": "Uploaded a 40 page PDF, asked three follow ups, and by the fourth question it says it can't see the file. Have to re-upload every single time. Happens on web and iOS.",
+      "comments": [
+        {
+          "author": "u/mgrantham",
+          "body": "Same here. Started for me around the beginning of the month.",
+          "score": "44"
+        },
+        {
+          "author": "u/lena_k",
+          "body": "Workaround is pasting the text inline but that defeats the point.",
+          "score": "17"
+        }
+      ],
+      "scraped_at": "2026-08-15T16:56:35Z",
+      "created_at": "2026-08-11T14:22:09.412000+0000"
+    }
+  },
+  {
+    "platform": "reddit",
+    "signal_id": "https://www.reddit.com/r/singularity/comments/4d5e6f/perplexity_citations_pointing_to_dead_links/",
+    "url": "https://www.reddit.com/r/singularity/comments/4d5e6f/perplexity_citations_pointing_to_dead_links/",
+    "title": "Perplexity citations pointing to dead links again",
+    "body": "About one in five citations 404s for me. It's confidently citing pages that no longer exist. Makes it hard to trust for research work.",
+    "author": "mgrantham",
+    "score": "1203",
+    "engagement": {
+      "score": "1203",
+      "comments": []
+    },
+    "scraped_at": "2026-08-15T16:56:41.104220+00:00",
+    "raw": {
+      "url": "https://www.reddit.com/r/singularity/comments/4d5e6f/perplexity_citations_pointing_to_dead_links/",
+      "title": "Perplexity citations pointing to dead links again",
+      "author": "mgrantham",
+      "subreddit": "r/singularity",
+      "score": "1203",
+      "comments_count": "244",
+      "body": "About one in five citations 404s for me. It's confidently citing pages that no longer exist. Makes it hard to trust for research work.",
+      "comments": [],
+      "scraped_at": "2026-08-15T16:56:41Z",
+      "created_at": "2026-08-09T03:47:55.881000+0000"
+    }
+  },
+  {
+    "platform": "reddit",
+    "signal_id": "https://www.reddit.com/r/ChatGPT/comments/6p7q8r/switched_from_perplexity_because_of_the_mobile_app/",
+    "url": "https://www.reddit.com/r/ChatGPT/comments/6p7q8r/switched_from_perplexity_because_of_the_mobile_app/",
+    "title": "Switched off Perplexity because of the mobile app",
+    "body": "The Android app freezes for 4-5 seconds every time I open a long thread. Scroll position resets to the top constantly. Web is fine, mobile is unusable for me.",
+    "author": "lena_k",
+    "score": "756",
+    "engagement": {
+      "score": "756",
+      "comments": []
+    },
+    "scraped_at": "2026-08-15T16:56:47.883011+00:00",
+    "raw": {
+      "url": "https://www.reddit.com/r/ChatGPT/comments/6p7q8r/switched_from_perplexity_because_of_the_mobile_app/",
+      "title": "Switched off Perplexity because of the mobile app",
+      "author": "lena_k",
+      "subreddit": "r/ChatGPT",
+      "score": "756",
+      "comments_count": "129",
+      "body": "The Android app freezes for 4-5 seconds every time I open a long thread. Scroll position resets to the top constantly. Web is fine, mobile is unusable for me.",
+      "comments": [],
+      "scraped_at": "2026-08-15T16:56:47Z",
+      "created_at": "2026-08-12T07:19:44.203000+0000"
+    }
+  },
+  {
+    "platform": "reddit",
+    "signal_id": "https://www.reddit.com/r/perplexity_ai/comments/9s0t1u/is_the_model_selector_actually_doing_anything/",
+    "url": "https://www.reddit.com/r/perplexity_ai/comments/9s0t1u/is_the_model_selector_actually_doing_anything/",
+    "title": "Is the model selector actually doing anything?",
+    "body": "I pick the big model and the answers read exactly like the fast one. There's no way to verify what actually ran.",
+    "author": "tomas_v",
+    "score": "298",
+    "engagement": {
+      "score": "298",
+      "comments": []
+    },
+    "scraped_at": "2026-08-15T16:56:52.219884+00:00",
+    "raw": {
+      "url": "https://www.reddit.com/r/perplexity_ai/comments/9s0t1u/is_the_model_selector_actually_doing_anything/",
+      "title": "Is the model selector actually doing anything?",
+      "author": "tomas_v",
+      "subreddit": "r/perplexity_ai",
+      "score": "298",
+      "comments_count": "61",
+      "body": "I pick the big model and the answers read exactly like the fast one. There's no way to verify what actually ran.",
+      "comments": [],
+      "scraped_at": "2026-08-15T16:56:52Z",
+      "created_at": "2026-08-06T17:02:10.664000+0000"
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "1954480000000000001",
+    "url": "https://x.com/devanshu_b/status/1954480000000000001",
+    "title": "third month in a row perplexity billed me after I cancelled. support ticket open for 9 days, no reply. going back to plain",
+    "body": "third month in a row perplexity billed me after I cancelled. support ticket open for 9 days, no reply. going back to plain search",
+    "author": "devanshu_b",
+    "score": "3140 Likes. Like",
+    "engagement": {
+      "likes": "3140 Likes. Like",
+      "replies": "196 Replies. Reply",
+      "retweets": "412 reposts. Repost"
+    },
+    "scraped_at": "2026-08-15T16:57:10.442190+00:00",
+    "raw": {
+      "text": "third month in a row perplexity billed me after I cancelled. support ticket open for 9 days, no reply. going back to plain search",
+      "time": "2026-08-13T18:05:30Z",
+      "url": "https://x.com/devanshu_b/status/1954480000000000001",
+      "replies": "196 Replies. Reply",
+      "retweets": "412 reposts. Repost",
+      "likes": "3140 Likes. Like",
+      "handle": "devanshu_b"
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "1954480000000000002",
+    "url": "https://x.com/sarah_builds/status/1954480000000000002",
+    "title": "perplexity api streaming just stops at ~2k tokens with no finish_reason. anyone else hitting this? been burning a day on",
+    "body": "perplexity api streaming just stops at ~2k tokens with no finish_reason. anyone else hitting this? been burning a day on it",
+    "author": "sarah_builds",
+    "score": "887 Likes. Like",
+    "engagement": {
+      "likes": "887 Likes. Like",
+      "replies": "63 Replies. Reply",
+      "retweets": "94 reposts. Repost"
+    },
+    "scraped_at": "2026-08-15T16:57:10.442190+00:00",
+    "raw": {
+      "text": "perplexity api streaming just stops at ~2k tokens with no finish_reason. anyone else hitting this? been burning a day on it",
+      "time": "2026-08-14T11:41:12Z",
+      "url": "https://x.com/sarah_builds/status/1954480000000000002",
+      "replies": "63 Replies. Reply",
+      "retweets": "94 reposts. Repost",
+      "likes": "887 Likes. Like",
+      "handle": "sarah_builds"
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "1954480000000000003",
+    "url": "https://x.com/j_matsuda/status/1954480000000000003",
+    "title": "ask in Japanese, get five English blog posts back. the Japanese sources are right there and better.",
+    "body": "ask in Japanese, get five English blog posts back. the Japanese sources are right there and better.",
+    "author": "j_matsuda",
+    "score": "204 Likes. Like",
+    "engagement": {
+      "likes": "204 Likes. Like",
+      "replies": "18 Replies. Reply",
+      "retweets": "31 reposts. Repost"
+    },
+    "scraped_at": "2026-08-15T16:57:10.442190+00:00",
+    "raw": {
+      "text": "ask in Japanese, get five English blog posts back. the Japanese sources are right there and better.",
+      "time": "2026-08-09T08:40:00Z",
+      "url": "https://x.com/j_matsuda/status/1954480000000000003",
+      "replies": "18 Replies. Reply",
+      "retweets": "31 reposts. Repost",
+      "likes": "204 Likes. Like",
+      "handle": "j_matsuda"
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "1954480000000000004",
+    "url": "https://x.com/renata_dev/status/1954480000000000004",
+    "title": "answers land before I finish reading the question. this is the only reason I stopped using anything else.",
+    "body": "answers land before I finish reading the question. this is the only reason I stopped using anything else.",
+    "author": "renata_dev",
+    "score": "1560 Likes. Like",
+    "engagement": {
+      "likes": "1560 Likes. Like",
+      "replies": "47 Replies. Reply",
+      "retweets": "233 reposts. Repost"
+    },
+    "scraped_at": "2026-08-15T16:57:10.442190+00:00",
+    "raw": {
+      "text": "answers land before I finish reading the question. this is the only reason I stopped using anything else.",
+      "time": "2026-08-14T22:05:00Z",
+      "url": "https://x.com/renata_dev/status/1954480000000000004",
+      "replies": "47 Replies. Reply",
+      "retweets": "233 reposts. Repost",
+      "likes": "1560 Likes. Like",
+      "handle": "renata_dev"
+    }
+  },
+  {
+    "platform": "hackernews",
+    "signal_id": "49301188",
+    "url": "https://perplexity.ai/hub/blog/pro-search-update",
+    "title": "Perplexity Pro Search update drops uploaded file context",
+    "body": "Perplexity Pro Search update drops uploaded file context",
+    "author": "hkramer",
+    "score": "284",
+    "engagement": {
+      "points": 284,
+      "num_comments": 137
+    },
+    "scraped_at": "2026-08-15T17:09:20Z",
+    "raw": {
+      "objectID": "49301188",
+      "story_id": 49301188,
+      "title": "Perplexity Pro Search update drops uploaded file context",
+      "url": "https://perplexity.ai/hub/blog/pro-search-update",
+      "author": "hkramer",
+      "points": 284,
+      "num_comments": 137,
+      "created_at": "2026-08-12T15:31:08Z",
+      "created_at_i": 1786462268,
+      "updated_at": "2026-08-13T02:11:40Z",
+      "children": [
+        49301301,
+        49301422,
+        49301590
+      ]
+    }
+  },
+  {
+    "platform": "hackernews",
+    "signal_id": "49288740",
+    "url": "https://news.ycombinator.com/item?id=49288740",
+    "title": "Ask HN: Anyone else seeing Perplexity API 429s below the documented limit?",
+    "body": "Docs say 50 req/min on Pro. We get 429s at ~18 req/min with no Retry-After header, so backoff is guesswork. Support pointed us at the docs page that is wrong.",
+    "author": "sarah_builds",
+    "score": "96",
+    "engagement": {
+      "points": 96,
+      "num_comments": 64
+    },
+    "scraped_at": "2026-08-15T17:09:20Z",
+    "raw": {
+      "objectID": "49288740",
+      "story_id": 49288740,
+      "title": "Ask HN: Anyone else seeing Perplexity API 429s below the documented limit?",
+      "url": null,
+      "author": "sarah_builds",
+      "points": 96,
+      "num_comments": 64,
+      "created_at": "2026-08-07T22:14:00Z",
+      "created_at_i": 1786054440,
+      "updated_at": "2026-08-08T09:02:15Z",
+      "children": [
+        49288801,
+        49288977
+      ]
+    }
+  }
+]
