@@ -32,16 +32,6 @@ app.add_middleware(
 )
 app.include_router(scrape_router)
 
-# The dashboard is a separate Next.js origin in dev, so it cannot read these
-# routes without CORS. Open here because nothing served is private; tighten to
-# the deployed origin before this is public.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # demo_server.py flips this to "demo". Reported by /health so a client can tell
 # a real backend from a canned one before trusting its output.
 MODE = "live"
