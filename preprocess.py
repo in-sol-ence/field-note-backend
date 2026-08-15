@@ -1,0 +1,575 @@
+"""T0 — product understanding.
+
+Turns three onboarding inputs (website, optional repo, optional detail form)
+into a ProductDossier: what the product is, the vocabulary real users use for
+it, and — the part that actually matters downstream — which *other* things
+share its name.
+
+Public API (this is the seam main.py calls across):
+
+    preprocess(website, repo, form)        -> ProductDossier
+    preprocess_stream(website, repo, form) -> AsyncIterator[Event]
+
+Knows nothing about HTTP. Testable by direct call.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import time
+from collections.abc import AsyncIterator, Awaitable, Iterable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from functools import lru_cache
+from urllib.parse import urlparse
+
+import httpx
+from pydantic import ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from schema import (
+    Disambiguation,
+    ErrorEvent,
+    Event,
+    ProductDossier,
+    Provenance,
+    ResultEvent,
+    Source,
+    StageEvent,
+    SynthesisDraft,
+)
+
+# --------------------------------------------------------------------------
+# Settings and clients
+# --------------------------------------------------------------------------
+
+
+class Settings(BaseSettings):
+    firecrawl_api_key: str = ""
+    exa_api_key: str = ""
+    xai_api_key: str = ""
+    grok_model: str = "grok-4.6"
+    xai_base_url: str = "https://api.x.ai/v1"
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+class MissingCredentials(RuntimeError):
+    """Raised before any spend when a required key is absent."""
+
+
+def require_keys() -> Settings:
+    s = get_settings()
+    missing = [
+        name
+        for name, value in (
+            ("FIRECRAWL_API_KEY", s.firecrawl_api_key),
+            ("EXA_API_KEY", s.exa_api_key),
+            ("XAI_API_KEY", s.xai_api_key),
+        )
+        if not value
+    ]
+    if missing:
+        raise MissingCredentials(f"missing required env var(s): {', '.join(missing)}")
+    return s
+
+
+def _firecrawl():
+    from firecrawl import AsyncFirecrawl
+
+    return AsyncFirecrawl(api_key=get_settings().firecrawl_api_key)
+
+
+def _exa():
+    from exa_py import AsyncExa
+
+    return AsyncExa(get_settings().exa_api_key)
+
+
+def _grok():
+    from openai import AsyncOpenAI
+
+    s = get_settings()
+    return AsyncOpenAI(api_key=s.xai_api_key, base_url=s.xai_base_url)
+
+
+# --------------------------------------------------------------------------
+# Pure helpers — the unit-tested core. No network, no globals.
+# --------------------------------------------------------------------------
+
+_HIGH_VALUE = {
+    "pricing": 100,
+    "plans": 90,
+    "docs": 90,
+    "documentation": 90,
+    "features": 85,
+    "about": 80,
+    "product": 75,
+    "how-it-works": 70,
+    "use-cases": 70,
+    "usecases": 70,
+    "faq": 65,
+    "changelog": 60,
+    "getting-started": 60,
+    "quickstart": 60,
+}
+
+_PENALTY = {
+    "privacy": -200,
+    "terms": -200,
+    "legal": -200,
+    "cookies": -200,
+    "careers": -150,
+    "jobs": -150,
+    "login": -150,
+    "signin": -150,
+    "signup": -150,
+    "tag": -80,
+    "author": -80,
+}
+
+_DATED = re.compile(r"(?:^|/)(?:19|20)\d{2}(?:[/-]|$)")
+
+
+def slugify(name: str) -> str:
+    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.strip().lower())).strip("-") or "product"
+
+
+def normalize_website(url: str) -> str:
+    url = url.strip()
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    return url.rstrip("/")
+
+
+def normalize_repo(repo: str | None) -> str | None:
+    """Accept `owner/repo`, a full GitHub URL, or a `.git` suffix -> `owner/repo`."""
+    if not repo or not repo.strip():
+        return None
+    value = repo.strip().rstrip("/")
+    value = re.sub(r"\.git$", "", value)
+    if "github.com" in value:
+        path = urlparse(value if "://" in value else "https://" + value).path
+        value = path.strip("/")
+    parts = [p for p in value.split("/") if p]
+    if len(parts) < 2:
+        return None
+    return f"{parts[0]}/{parts[1]}"
+
+
+def host_of(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+def registrable(hostname: str) -> str:
+    """Cheap eTLD+1. Good enough to treat docs.foo.com and foo.com as one owner."""
+    parts = hostname.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
+
+
+def score_url(url: str) -> int:
+    path = urlparse(url).path.strip("/").lower()
+    if not path:
+        return -1000  # homepage is scraped separately
+    segments = [s for s in path.split("/") if s]
+    # max, not sum: a deep path shouldn't outrank /pricing by accumulating
+    # segments. Penalties stay additive so one bad segment still sinks the URL.
+    score = max((_HIGH_VALUE.get(s, 0) for s in segments), default=0)
+    score += sum(_PENALTY.get(s, 0) for s in segments)
+    if _DATED.search("/" + path):
+        score -= 60
+    score -= 8 * (len(segments) - 1)
+    return score
+
+
+def rank_sitemap_urls(urls: Sequence[str], limit: int = 5) -> list[str]:
+    """Pick the pages most likely to explain the product. Order is stable."""
+    seen = list(dict.fromkeys(urls))
+    scored = sorted(
+        ((score_url(u), i, u) for i, u in enumerate(seen)),
+        key=lambda t: (-t[0], t[1]),
+    )
+    return [u for s, _, u in scored if s > 0][:limit]
+
+
+def partition_results(
+    urls: Sequence[str], product_hosts: Iterable[str]
+) -> tuple[list[str], list[str]]:
+    """Split search hits into product-owned vs everything else."""
+    owned = {registrable(h) for h in product_hosts if h}
+    mine, other = [], []
+    for u in urls:
+        (mine if registrable(host_of(u)) in owned else other).append(u)
+    return mine, other
+
+
+def ambiguity_score(urls: Sequence[str], product_hosts: Iterable[str]) -> float:
+    """Share of the bare-name result space the product does *not* own.
+
+    Deliberately blunt: third-party coverage counts as ambiguity, because T2
+    still has to decide about those pages. 0.0 means the name is uncontested.
+    """
+    if not urls:
+        return 0.0
+    mine, other = partition_results(urls, product_hosts)
+    return round(len(other) / len(urls), 3)
+
+
+def drop_unsourced_collisions(
+    draft: SynthesisDraft, fetched_urls: Iterable[str]
+) -> tuple[SynthesisDraft, list[str]]:
+    """Discard any collision citing a URL we never actually fetched.
+
+    The prompt says "use only supplied evidence", but prompts leak. This is the
+    deterministic backstop: a fabricated namesake would misdirect every
+    downstream scrape, so membership must trace to something we really saw.
+    """
+    allowed = {u.rstrip("/") for u in fetched_urls}
+    kept, dropped = [], []
+    for c in draft.disambiguation.name_collisions:
+        if c.evidence_url.rstrip("/") in allowed:
+            kept.append(c)
+        else:
+            dropped.append(f"dropped unsourced collision {c.name!r} ({c.evidence_url})")
+    draft.disambiguation.name_collisions = kept
+    return draft, dropped
+
+
+# --------------------------------------------------------------------------
+# Evidence accumulator
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Evidence:
+    blocks: list[tuple[str, str]] = field(default_factory=list)
+    sources: list[Source] = field(default_factory=list)
+    degraded: list[str] = field(default_factory=list)
+    hosts: set[str] = field(default_factory=set)
+    bare_name_urls: list[str] = field(default_factory=list)
+
+    def add(self, label: str, text: str, url: str, via: str, cap: int = 6000) -> None:
+        if not text:
+            return
+        self.blocks.append((label, text[:cap]))
+        self.sources.append(
+            Source(url=url, fetched_at=datetime.now(timezone.utc), via=via)  # type: ignore[arg-type]
+        )
+
+    def urls(self) -> list[str]:
+        return [s.url for s in self.sources]
+
+    def prompt_text(self) -> str:
+        return "\n\n".join(f"### {label}\n{body}" for label, body in self.blocks)
+
+
+# --------------------------------------------------------------------------
+# Source adapters
+# --------------------------------------------------------------------------
+
+_MANIFESTS = ("package.json", "pyproject.toml", "Cargo.toml", "go.mod")
+
+
+async def _map_site(url: str, limit: int = 150) -> list[str]:
+    data = await _firecrawl().map(url, limit=limit)
+    return [ln.url for ln in (data.links or []) if getattr(ln, "url", None)]
+
+
+async def _scrape(url: str) -> str:
+    doc = await _firecrawl().scrape(url, formats=["markdown"], only_main_content=True)
+    return getattr(doc, "markdown", "") or ""
+
+
+async def _scrape_meta(url: str) -> tuple[str, dict]:
+    doc = await _firecrawl().scrape(url, formats=["markdown"], only_main_content=True)
+    meta = getattr(doc, "metadata", None) or {}
+    if not isinstance(meta, dict):
+        meta = getattr(meta, "model_dump", lambda: {})()
+    return (getattr(doc, "markdown", "") or ""), meta
+
+
+async def _fetch_manifest(repo: str) -> tuple[str, str] | None:
+    """Read a dependency manifest straight off raw.githubusercontent.
+
+    Static file host, no API key, no Firecrawl credit — the package name it
+    yields is the least collision-prone identity signal we get.
+    """
+    async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+        for fname in _MANIFESTS:
+            url = f"https://raw.githubusercontent.com/{repo}/HEAD/{fname}"
+            try:
+                r = await client.get(url)
+            except httpx.HTTPError:
+                continue
+            if r.status_code == 200 and r.text.strip():
+                return url, r.text[:4000]
+    return None
+
+
+async def _exa_search(query: str, n: int = 10) -> list[tuple[str, str, str]]:
+    res = await _exa().search(query, num_results=n)
+    return [
+        (r.url, getattr(r, "title", "") or "", (getattr(r, "text", "") or "")[:400])
+        for r in res.results
+    ]
+
+
+async def _exa_similar(url: str, n: int = 10) -> list[tuple[str, str, str]]:
+    res = await _exa().find_similar(url, num_results=n, exclude_source_domain=True)
+    return [
+        (r.url, getattr(r, "title", "") or "", (getattr(r, "text", "") or "")[:300])
+        for r in res.results
+    ]
+
+
+def _fmt_hits(hits: Sequence[tuple[str, str, str]]) -> str:
+    return "\n".join(f"- {url}\n  title: {title}\n  excerpt: {snip}" for url, title, snip in hits)
+
+
+# --------------------------------------------------------------------------
+# Synthesis
+# --------------------------------------------------------------------------
+
+_SYSTEM = """You analyse software products so that a downstream scraper can \
+find real users discussing THIS product and not something else that happens to \
+share its name.
+
+Absolute rules:
+1. Use ONLY the supplied evidence. Never rely on prior knowledge of the product.
+2. Every name_collision MUST cite an evidence_url copied verbatim from the \
+evidence. A collision you cannot cite must be omitted entirely.
+3. A name_collision is a DIFFERENT ENTITY that shares the name (a word, another \
+company, a game, a technical term) — never a competitor in the same category, \
+and never third-party coverage of this product.
+4. If the evidence does not support a field, use null or an empty list. Do not guess.
+5. feature_jargon should hold distinctive product-specific terms that would \
+rarely appear in unrelated text — these are the highest-value search keys.
+6. positive_signals are terms whose presence alongside the name confirms it IS \
+this product. negative_signals indicate it is NOT.
+
+Return a single JSON object. No markdown fence, no commentary."""
+
+
+def _build_prompt(name: str, website: str, repo: str | None, form: str | None, ev: Evidence) -> str:
+    parts = [f"PRODUCT NAME (as given): {name}", f"WEBSITE: {website}"]
+    if repo:
+        parts.append(f"GITHUB REPO: {repo}")
+    if form:
+        parts.append(
+            "OPERATOR-SUPPLIED DESCRIPTION (trusted — weight this heavily):\n" + form.strip()
+        )
+    parts.append("\n--- EVIDENCE ---\n" + ev.prompt_text())
+    parts.append(
+        "\n--- OUTPUT SCHEMA ---\n"
+        + json.dumps(SynthesisDraft.model_json_schema(), indent=1)
+    )
+    return "\n\n".join(parts)
+
+
+async def _synthesize(prompt: str) -> SynthesisDraft:
+    """One call, then at most one repair seeded with the validation error."""
+    client, s = _grok(), get_settings()
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": prompt},
+    ]
+    last_err: Exception | None = None
+    for attempt in range(2):
+        resp = await client.chat.completions.create(
+            model=s.grok_model,
+            messages=messages,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content or "{}"
+        try:
+            return SynthesisDraft.model_validate_json(raw)
+        except ValidationError as e:
+            last_err = e
+            messages += [
+                {"role": "assistant", "content": raw[:4000]},
+                {
+                    "role": "user",
+                    "content": (
+                        "That JSON failed schema validation. Fix ONLY the listed "
+                        f"problems and return the corrected object:\n{e}"
+                    ),
+                },
+            ]
+    raise ValueError(f"synthesis failed schema validation after repair: {last_err}")
+
+
+# --------------------------------------------------------------------------
+# Orchestration
+# --------------------------------------------------------------------------
+
+
+async def _labelled(stage: str, coro: Awaitable):
+    try:
+        return stage, await coro, None
+    except Exception as exc:  # noqa: BLE001 - degrade, don't die
+        return stage, None, exc
+
+
+def _context_terms(meta: dict, fallback: str) -> str:
+    text = " ".join(str(meta.get(k, "")) for k in ("description", "title")).strip()
+    words = re.findall(r"[A-Za-z][A-Za-z0-9+.-]{2,}", text)[:6]
+    return " ".join(words) or fallback
+
+
+async def preprocess_stream(
+    website: str,
+    repo: str | None = None,
+    form: str | None = None,
+    name: str | None = None,
+) -> AsyncIterator[Event]:
+    """Run T0, surfacing progress as each stage lands."""
+    started = time.monotonic()
+    settings = require_keys()  # fail before any spend
+    site = normalize_website(website)
+    repo_slug = normalize_repo(repo)
+    guess_name = (name or "").strip() or host_of(site).split(".")[0]
+
+    ev = Evidence()
+    ev.hosts.add(host_of(site))
+    if repo_slug:
+        ev.hosts.add("github.com")
+
+    # ---- Stage A: ground truth + collision hunt, all at once -------------
+    jobs: list[tuple[str, Awaitable]] = [
+        ("map", _map_site(site)),
+        ("scrape_site", _scrape_meta(site)),
+        ("search_collisions", _exa_search(guess_name, n=12)),
+        ("find_similar", _exa_similar(site, n=8)),
+    ]
+    if repo_slug:
+        jobs.append(("scrape_repo", _scrape(f"https://github.com/{repo_slug}")))
+
+    for stage, _ in jobs:
+        yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
+
+    sitemap: list[str] = []
+    home_meta: dict = {}
+    results = await asyncio.gather(*(_labelled(s, c) for s, c in jobs))
+
+    for stage, value, err in results:
+        if err is not None:
+            ev.degraded.append(f"{stage}: {err}")
+            yield ErrorEvent(stage=stage, detail=str(err)[:300], fatal=False)  # type: ignore[arg-type]
+            continue
+        if stage == "map":
+            sitemap = value
+            yield StageEvent(stage="map", status="done", detail=f"{len(sitemap)} pages found")
+        elif stage == "scrape_site":
+            markdown, home_meta = value
+            ev.add("Product homepage", markdown, site, "firecrawl")
+            yield StageEvent(stage="scrape_site", status="done", detail=site)
+        elif stage == "scrape_repo":
+            ev.add("GitHub repository page", value, f"https://github.com/{repo_slug}", "firecrawl")
+            yield StageEvent(stage="scrape_repo", status="done", detail=repo_slug or "")
+        elif stage == "search_collisions":
+            ev.bare_name_urls = [u for u, _, _ in value]
+            ev.add(
+                f"Open-web search for the bare name {guess_name!r} "
+                "(some of these are OTHER things sharing the name)",
+                _fmt_hits(value),
+                f"exa:search:{guess_name}",
+                "exa",
+            )
+            yield StageEvent(
+                stage="search_collisions", status="done", detail=f"{len(value)} hits"
+            )
+        elif stage == "find_similar":
+            ev.add("Semantically adjacent products", _fmt_hits(value), f"exa:similar:{site}", "exa")
+            yield StageEvent(stage="find_similar", status="done", detail=f"{len(value)} hits")
+
+    # collision evidence URLs must be citable
+    for u in ev.bare_name_urls:
+        ev.sources.append(Source(url=u, fetched_at=datetime.now(timezone.utc), via="exa"))
+
+    # ---- Stage B+C: deep read and contextual search, in parallel ---------
+    targets = rank_sitemap_urls(sitemap, limit=5)
+    context = _context_terms(home_meta, guess_name)
+
+    phase2: list[tuple[str, Awaitable]] = [
+        (f"page:{t}", _scrape(t)) for t in targets
+    ]
+    phase2.append(("search_context", _exa_search(f"{guess_name} {context}", n=8)))
+    if repo_slug:
+        phase2.append(("manifest", _fetch_manifest(repo_slug)))
+
+    if targets:
+        yield StageEvent(stage="scrape_site", status="running", detail=f"{len(targets)} key pages")
+    yield StageEvent(stage="search_context", status="running")
+
+    for stage, value, err in await asyncio.gather(*(_labelled(s, c) for s, c in phase2)):
+        if err is not None:
+            ev.degraded.append(f"{stage}: {err}")
+            continue
+        if stage.startswith("page:"):
+            url = stage[5:]
+            ev.add(f"Site page {url}", value, url, "firecrawl")
+        elif stage == "manifest" and value:
+            url, text = value
+            ev.add("Dependency manifest (authoritative package name)", text, url, "http")
+        elif stage == "search_context":
+            ev.add(
+                f"Contextual search {guess_name + ' ' + context!r} (mostly the real product)",
+                _fmt_hits(value),
+                f"exa:search:{guess_name} {context}",
+                "exa",
+            )
+
+    yield StageEvent(stage="scrape_site", status="done", detail=f"{len(ev.blocks)} evidence blocks")
+    yield StageEvent(stage="search_context", status="done")
+
+    # ---- Stage D: synthesis --------------------------------------------
+    yield StageEvent(stage="synthesize", status="running", detail=settings.grok_model)
+    draft = await _synthesize(_build_prompt(guess_name, site, repo_slug, form, ev))
+
+    draft, dropped = drop_unsourced_collisions(draft, ev.urls())
+    ev.degraded.extend(dropped)
+
+    hosts = ev.hosts | {host_of(draft.identity.homepage or site)}
+    dossier = ProductDossier(
+        identity=draft.identity,
+        what=draft.what,
+        vocabulary=draft.vocabulary,
+        disambiguation=Disambiguation(
+            **draft.disambiguation.model_dump(),
+            ambiguity_score=ambiguity_score(ev.bare_name_urls, hosts),
+        ),
+        provenance=Provenance(
+            sources=ev.sources,
+            field_confidence=draft.field_confidence,
+            degraded_sources=ev.degraded,
+            generated_at=datetime.now(timezone.utc),
+            runtime_ms=int((time.monotonic() - started) * 1000),
+        ),
+    )
+    yield StageEvent(stage="synthesize", status="done")
+    yield ResultEvent(dossier=dossier)
+
+
+async def preprocess(
+    website: str,
+    repo: str | None = None,
+    form: str | None = None,
+    name: str | None = None,
+) -> ProductDossier:
+    """Run T0 and return the finished dossier."""
+    async for event in preprocess_stream(website, repo, form, name):
+        if isinstance(event, ResultEvent):
+            return event.dossier
+        if isinstance(event, ErrorEvent) and event.fatal:
+            raise RuntimeError(event.detail)
+    raise RuntimeError("preprocess stream ended without producing a dossier")
