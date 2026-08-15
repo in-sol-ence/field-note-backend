@@ -142,10 +142,47 @@ and fall back to these files if a re-run is requested.
 
 ---
 
+## X via field-note (`POST /scrape/x`)
+
+X ingest always exits as **`assets.Signal`** (via `x_signals.to_signals` /
+`tweets_to_signals`), shaped so ``scraping.mapper.signal_to_post`` accepts it
+(same contract as ``scraping/data/signals_testfixture.json``: `raw.handle`,
+`raw.time`, engagement counts). HTTP responses include both `signals` and
+`posts` (T2 Post objects). Live x-scraper tweets never skip that mapping.
+
+X can be scraped through the field-note API without standing up social-signals:
+
+| `provider` | Backend |
+|---|---|
+| `x-scraper` (default) | Local Playwright checkout (`X_SCRAPER_ROOT`, else `../x-scraper`) |
+| `social-signals` | Remote `POST /v1/jobs/watch` on `SOCIAL_SIGNALS_URL` |
+| `fixture` | Load Signal/tweet JSON (`fixture_path` / `X_SCRAPE_FIXTURE`) |
+
+```bash
+# Offline (uses existing Signal JSON)
+curl -s localhost:8000/scrape/x -H 'content-type: application/json' -d '{
+  "provider": "fixture",
+  "fixture_path": "data/signals_openclaw_x.json",
+  "count": 5
+}'
+
+# Live local x-scraper (cookies + Playwright already set up in that repo)
+curl -s localhost:8000/scrape/x -H 'content-type: application/json' -d '{
+  "provider": "x-scraper",
+  "product": "OpenClaw",
+  "count": 20
+}'
+```
+
+Watch YAML (`social_signals_patch/config/crispy-pancake.yaml`) carries the same
+`watch.targets.x.provider` knobs for T1 to rewrite.
+
+---
+
 ## Live scraping from the backend
 
-The demo scrapes live. `social-signals` runs as an HTTP service and the backend
-drives it over `POST /v1/jobs/watch`.
+Reddit/HN demo scrapes live via `social-signals` as an HTTP service; the backend
+can also drive X through that service when `provider` is `social-signals`.
 
 ### Start the service (on the machine holding the browser cookies)
 

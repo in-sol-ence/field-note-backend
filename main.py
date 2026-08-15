@@ -12,11 +12,13 @@ from fastapi.responses import StreamingResponse
 
 from pipeline import MissingCredentials, preflight, run_stream
 from schema import ErrorEvent, Event, PreprocessRequest
+from scraping.routes import router as scrape_router
 
 app = FastAPI(
     title="Cursor Hackathon API",
     version="0.1.0",
 )
+app.include_router(scrape_router)
 
 # demo_server.py flips this to "demo". Reported by /health so a client can tell
 # a real backend from a canned one before trusting its output.

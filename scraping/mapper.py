@@ -62,13 +62,21 @@ def _source_id(platform: str, url: str, raw: dict[str, Any], signal_id: str | No
         return f"t3_{match.group(1)}" if match else None
     if platform == "hackernews":
         return str(raw.get("objectID") or signal_id or "") or None
-    # X: the scraper emits no id field — signal_id is the tweet id.
+    # X: social-signals often omits raw.id; x-scraper puts the tweet id there.
+    # signal_id is always the tweet id in both shapes.
     return str(raw.get("id") or signal_id or "") or None
 
 
 def _score(platform: str, signal: dict[str, Any], engagement: dict[str, Any]) -> int | None:
+    raw = signal.get("raw") or {}
+    metrics = raw.get("metrics") if isinstance(raw.get("metrics"), dict) else {}
     value = _to_int(
-        signal.get("score") or engagement.get("score") or engagement.get("points")
+        signal.get("score")
+        or engagement.get("score")
+        or engagement.get("points")
+        or engagement.get("likes")
+        or raw.get("likes")
+        or metrics.get("favorite_count")
     )
     # A tweet with no like count has zero likes; a Reddit post with no score
     # genuinely failed to scrape, so leave that one unknown.
@@ -78,7 +86,9 @@ def _score(platform: str, signal: dict[str, Any], engagement: dict[str, Any]) ->
 
 
 def _created_at(raw: dict[str, Any]) -> str | None:
-    return raw.get("created_at") or raw.get("time")
+    # social-signals X uses `time`; x-scraper / Twitter use `created_at`.
+    # Prefer `time` when present so remapped Signals win over raw Twitter strings.
+    return raw.get("time") or raw.get("created_at")
 
 
 def _canonical_url(platform: str, signal: dict[str, Any], raw: dict[str, Any]) -> str:
@@ -130,17 +140,34 @@ def _reddit_fields(raw: dict[str, Any], engagement: dict[str, Any]) -> dict[str,
     }
 
 
-def _x_fields(raw: dict[str, Any], engagement: dict[str, Any]) -> dict[str, Any]:
+def _x_handle(raw: dict[str, Any], author: Any = None) -> str:
+    """Resolve @handle from social-signals or x-scraper raw payloads."""
+    user = raw.get("user") if isinstance(raw.get("user"), dict) else {}
+    handle = raw.get("handle") or user.get("username") or author or ""
+    return str(handle).lstrip("@")
+
+
+def _x_fields(
+    raw: dict[str, Any],
+    engagement: dict[str, Any],
+    author: Any = None,
+) -> dict[str, Any]:
     # X has no real title — social-signals fills it with text[:120]. Drop it
     # rather than let the dashboard render a truncated body as a headline.
-    handle = raw.get("handle") or ""
+    handle = _x_handle(raw, author)
+    metrics = raw.get("metrics") if isinstance(raw.get("metrics"), dict) else {}
+    replies = (
+        engagement.get("replies")
+        or raw.get("replies")
+        or metrics.get("reply_count")
+    )
     return {
-        "channel": handle if handle.startswith("@") else f"@{handle}",
+        "channel": f"@{handle}" if handle else None,
         "title": None,
         "comments": [],
         # X omits the count from the ARIA label when it is zero, so an
         # unparseable reply label means no replies — not unknown.
-        "num_comments": _to_int(engagement.get("replies") or raw.get("replies")) or 0,
+        "num_comments": _to_int(replies) or 0,
     }
 
 
@@ -155,7 +182,6 @@ def _hackernews_fields(raw: dict[str, Any], engagement: dict[str, Any]) -> dict[
 
 _PLATFORM_FIELDS = {
     "reddit": _reddit_fields,
-    "x": _x_fields,
     "hackernews": _hackernews_fields,
 }
 
@@ -178,10 +204,14 @@ def signal_to_post(signal: dict[str, Any]) -> dict[str, Any]:
     if platform == "reddit" and author:
         author = f"u/{author}"
     elif platform == "x":
-        # signal.author is the display name ("Justin Merrlles"); the handle is
-        # what makes a citation clickable and unambiguous.
-        author = raw.get("handle") or author or ""
-        author = author if author.startswith("@") else f"@{author}"
+        # Prefer raw.handle / user.username; fall back to signal.author (id ok).
+        handle = _x_handle(raw, author)
+        author = f"@{handle}" if handle else None
+
+    if platform == "x":
+        platform_fields = _x_fields(raw, engagement, signal.get("author"))
+    else:
+        platform_fields = _PLATFORM_FIELDS[platform](raw, engagement)
 
     return {
         "id": _stable_id(platform, url),
@@ -202,7 +232,7 @@ def signal_to_post(signal: dict[str, Any]) -> dict[str, Any]:
         # Which search surfaced this post, if any. Null for feed/listing hits.
         # Lets T2 tell a targeted hit from an ambient one.
         "search_query": raw.get("search_query"),
-        **_PLATFORM_FIELDS[platform](raw, engagement),
+        **platform_fields,
     }
 
 

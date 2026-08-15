@@ -1,7 +1,7 @@
 """T1 — scraping, with a fixture fallback.
 
 Drives the social-signals service over `POST /v1/jobs/watch`, polls it to
-completion, and normalizes what comes back through `scraping/mapper.py` into
+completion, and normalizes what comes back through `scraping.mapper` into
 the frozen `Post` contract.
 
 Reddit takes 3-5 minutes for a single target and needs a browser session with
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -34,11 +33,7 @@ from schema import (
     ScrapeTargets,
     StageEvent,
 )
-
-# mapper.py lives beside the scraped data it was written against, not on the
-# package path.
-sys.path.insert(0, str(Path(__file__).parent / "scraping"))
-from mapper import signals_to_posts  # noqa: E402
+from scraping.mapper import signals_to_posts
 
 __all__ = ["FIXTURES", "harvest_stream", "load_fixtures", "to_posts"]
 
