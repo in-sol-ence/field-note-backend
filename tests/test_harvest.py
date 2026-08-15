@@ -6,6 +6,7 @@ Reddit session and a dead demo — so it is tested from both directions.
 
 import asyncio
 import json
+import time
 
 import harvest
 from harvest import (
@@ -212,3 +213,69 @@ def test_platforms_without_targets_are_never_scraped(monkeypatch) -> None:
 def test_the_targets_used_are_reported_back(monkeypatch) -> None:
     monkeypatch.setattr(harvest, "_run_watch", _fake_watch({"reddit": []}))
     assert _harvest(_drain()).targets == TARGETS
+
+
+# --- concurrency -----------------------------------------------------------
+
+
+def test_platforms_are_scraped_concurrently(monkeypatch) -> None:
+    """HackerNews answers in seconds; it must not queue behind Reddit's
+    minutes. Reddit here refuses to finish until HackerNews has been asked,
+    which deadlocks under sequential scraping."""
+    hn_started = asyncio.Event()
+
+    def run(platform, targets, per_target_limit):
+        async def gen():
+            if platform == "hackernews":
+                hn_started.set()
+                yield load_fixtures("hackernews")[:1]
+            else:
+                await asyncio.wait_for(hn_started.wait(), timeout=2)
+                yield load_fixtures("reddit")[:1]
+
+        return gen()
+
+    monkeypatch.setattr(harvest, "_run_watch", run)
+    got = _harvest(_drain())  # TARGETS covers both platforms
+    assert got.live is True
+    assert len(got.posts) == 2
+
+
+def test_a_finished_job_is_not_taxed_with_a_poll_interval(monkeypatch) -> None:
+    """The first poll happens immediately; the sleep only follows a poll that
+    saw the job still running."""
+
+    class _Resp:
+        def __init__(self, data):
+            self._data = data
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._data
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **kw):
+            return _Resp({"poll_url": "/v1/jobs/1"})
+
+        async def get(self, url, **kw):
+            return _Resp({"status": "done", "result": {"signals": []}})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _Client())
+
+    async def go():
+        return [item async for item in harvest._run_watch("hackernews", TARGETS, 5)]
+
+    t0 = time.monotonic()
+    items = asyncio.run(go())
+    assert items == [[]]
+    assert time.monotonic() - t0 < harvest.POLL_INTERVAL
