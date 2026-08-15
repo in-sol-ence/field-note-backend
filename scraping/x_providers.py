@@ -37,14 +37,20 @@ def default_x_scraper_root() -> Path:
     env = os.environ.get("X_SCRAPER_ROOT", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    # Prefer the git submodule checked out inside this repo.
-    bundled = _BACKEND_ROOT / "x-scraper"
-    if (bundled / "main.py").is_file():
-        return bundled.resolve()
+    # Prefer a checkout *outside* this repo. Live scrapes write cookies / data /
+    # screenshots; with ``uvicorn --reload`` watching field-note-backend, those
+    # writes restart the worker and the Next proxy gets "socket hang up" after
+    # the scrape already succeeded.
     sibling = _BACKEND_ROOT.parent / "x-scraper"
     if (sibling / "main.py").is_file():
         return sibling.resolve()
-    return Path.home() / "x-scraper"
+    home = Path.home() / "x-scraper"
+    if (home / "main.py").is_file():
+        return home.resolve()
+    bundled = _BACKEND_ROOT / "x-scraper"
+    if (bundled / "main.py").is_file():
+        return bundled.resolve()
+    return home
 
 
 def _python_bin(root: Path) -> Path:

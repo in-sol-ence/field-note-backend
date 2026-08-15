@@ -6,6 +6,7 @@ and the frozen Post objects from ``scraping.mapper.signal_to_post``.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from typing import Any, Literal
 
@@ -85,14 +86,17 @@ def _filter_product(signals: list[dict[str, Any]], product: str) -> list[dict[st
 
 
 @router.post("/scrape/x", response_model=ScrapeResponse)
-def scrape_x_endpoint(req: XScrapeRequest) -> ScrapeResponse:
+async def scrape_x_endpoint(req: XScrapeRequest) -> ScrapeResponse:
     product = req.product
     if not product and req.website:
         product = website_to_product_hint(req.website)
 
     queries = list(req.search_queries)
     try:
-        signals = scrape_x(
+        # Playwright search is blocking; keep the event loop alive so health
+        # checks and the Next proxy don't see a dead connection mid-scrape.
+        signals = await asyncio.to_thread(
+            scrape_x,
             provider=req.provider,
             search_queries=queries or None,
             product=product,
