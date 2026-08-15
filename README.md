@@ -16,6 +16,19 @@ uv run uvicorn main:app --reload
 
 The API is available at <http://127.0.0.1:8000>. Interactive documentation is at <http://127.0.0.1:8000/docs>.
 
+## Running without API keys
+
+`demo_server.py` serves the real app with only `preprocess_stream` swapped for
+a canned Cursor dossier — genuine routing, preflight, SSE framing and pydantic
+models, no credits spent. Useful for checking the plumbing, and for rehearsing
+a demo without depending on three external APIs.
+
+```bash
+uv run uvicorn demo_server:app --port 8000
+```
+
+It returns the same dossier whatever you ask for, so never point a real run at it.
+
 ## Test
 
 ```bash
