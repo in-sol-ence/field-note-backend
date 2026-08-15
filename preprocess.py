@@ -262,6 +262,32 @@ def ambiguity_score(urls: Sequence[str], collisions: Iterable) -> float:
     return round(hits / len(urls), 3)
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def inputs_look_related(site: str, repo: str | None, site_text: str, repo_text: str) -> bool:
+    """Do the website and the repo describe the same product?
+
+    A mistyped or pasted-from-elsewhere repo produces a confident dossier that
+    silently blends two unrelated products, which is worse than failing: every
+    downstream stage inherits the mixture.
+    """
+    if not repo:
+        return True
+    domain = registrable(host_of(site))
+    owner, _, name = repo.partition("/")
+    if domain and domain in repo_text.lower():
+        return True
+    squashed_site = _squash(site_text)
+    for token in (_squash(repo), _squash(name), _squash(owner)):
+        if len(token) >= 5 and token in squashed_site:
+            return True
+    # the site's own domain label, e.g. "codexisland" from codexisland.com
+    label = _squash(domain.split(".")[0]) if domain else ""
+    return bool(label) and len(label) >= 5 and label in _squash(repo_text)
+
+
 def drop_unsourced_collisions(
     draft: SynthesisDraft, fetched_urls: Iterable[str]
 ) -> tuple[SynthesisDraft, list[str]]:
@@ -578,6 +604,20 @@ async def preprocess_stream(
     # collision evidence URLs must be citable
     for u in ev.bare_name_urls:
         ev.sources.append(Source(url=u, fetched_at=datetime.now(timezone.utc), via="exa"))
+
+    # ---- coherence: do the website and repo describe the same product? ---
+    if repo_slug:
+        site_text = " ".join(b for label, b in ev.blocks if "homepage" in label.lower())
+        repo_text = " ".join(b for label, b in ev.blocks if "repository" in label.lower())
+        if site_text and repo_text and not inputs_look_related(
+            site, repo_slug, site_text, repo_text
+        ):
+            warning = (
+                f"website {host_of(site)} and repo {repo_slug} do not appear to "
+                "describe the same product — the dossier may blend two of them"
+            )
+            ev.degraded.append(warning)
+            yield ErrorEvent(stage="scrape_repo", detail=warning, fatal=False)
 
     # ---- Stage B+C: deep read and contextual search, in parallel ---------
     targets = rank_sitemap_urls(sitemap, limit=5)

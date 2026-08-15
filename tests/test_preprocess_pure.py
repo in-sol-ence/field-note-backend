@@ -3,6 +3,7 @@
 import pytest
 
 from preprocess import (
+    inputs_look_related,
     ambiguity_score,
     drop_unsourced_collisions,
     host_of,
@@ -177,3 +178,28 @@ def test_guard_ignores_trailing_slash_mismatch() -> None:
 
     assert len(kept.disambiguation.name_collisions) == 1
     assert dropped == []
+
+
+def test_related_inputs_are_accepted() -> None:
+    assert inputs_look_related(
+        "https://codexisland.com", "ericjypark/codex-island",
+        "CodexIsland shows usage in your notch", "codex-island by ericjypark",
+    )
+    assert inputs_look_related(
+        "https://cursor.com", "getcursor/cursor",
+        "The AI code editor", "Homepage cursor.com — issues for Cursor",
+    )
+
+
+def test_a_repo_about_a_different_product_is_flagged() -> None:
+    # The exact failure this guards: a German product-design studio paired with
+    # an unrelated Swift app produces a confident, blended, useless dossier.
+    assert not inputs_look_related(
+        "https://your-product.com", "ericjypark/codex-island",
+        "your product ist das Werkstattatelier für Produktentwicklung",
+        "CodexIsland - AI usage limits in your MacBook notch",
+    )
+
+
+def test_no_repo_is_never_flagged() -> None:
+    assert inputs_look_related("https://acme.dev", None, "anything", "")
