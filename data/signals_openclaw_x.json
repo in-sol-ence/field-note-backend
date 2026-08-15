@@ -1,0 +1,253 @@
+[
+  {
+    "platform": "x",
+    "signal_id": "2088679096280629501",
+    "url": "https://x.com/i/status/2088679096280629501",
+    "title": "",
+    "body": "@theo I just ordered BOSGAME P4 Ultra Mini PC, Ryzen 7 7730U, 16GB RAM 1TB PCIe3.0 SSD https://t.co/cg1anteNrB to migrate from a Mac Mini.\n\nI bought the Mac Mini mabye 6 months ago in the throws of early OpenClaw. I abandoned the OpenClaw experiment quickly and the the mac mini became",
+    "author": "14957996",
+    "score": "0",
+    "engagement": {
+      "score": null,
+      "comments": [],
+      "likes": 0,
+      "replies": 0,
+      "retweets": 0
+    },
+    "scraped_at": "2026-08-15T17:57:39.210995+00:00",
+    "raw": {
+      "id": "2088679096280629501",
+      "text": "@theo I just ordered BOSGAME P4 Ultra Mini PC, Ryzen 7 7730U, 16GB RAM 1TB PCIe3.0 SSD https://t.co/cg1anteNrB to migrate from a Mac Mini.\n\nI bought the Mac Mini mabye 6 months ago in the throws of early OpenClaw. I abandoned the OpenClaw experiment quickly and the the mac mini became",
+      "full_text": "@theo I just ordered BOSGAME P4 Ultra Mini PC, Ryzen 7 7730U, 16GB RAM 1TB PCIe3.0 SSD https://t.co/cg1anteNrB to migrate from a Mac Mini.\n\nI bought the Mac Mini mabye 6 months ago in the throws of early OpenClaw. I abandoned the OpenClaw experiment quickly and the the mac mini became",
+      "created_at": "Sat Aug 15 17:27:56 +0000 2026",
+      "user": {
+        "id": "14957996",
+        "username": "",
+        "display_name": "",
+        "followers_count": 0,
+        "following_count": 0,
+        "verified": true,
+        "profile_image_url": "",
+        "description": ""
+      },
+      "metrics": {
+        "retweet_count": 0,
+        "favorite_count": 0,
+        "reply_count": 0,
+        "quote_count": 0,
+        "view_count": "22"
+      },
+      "lang": "en",
+      "possibly_sensitive": false,
+      "is_retweet": false,
+      "is_reply": true,
+      "is_quote": false,
+      "hashtags": [],
+      "urls": [
+        {
+          "url": "https://t.co/cg1anteNrB",
+          "expanded_url": "https://www.amazon.com/dp/B0GCH917SW",
+          "display_url": "amazon.com/dp/B0GCH917SW"
+        }
+      ],
+      "media": [],
+      "scraped_at": 1786816659.2109954
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "2088675446170726848",
+    "url": "https://x.com/i/status/2088675446170726848",
+    "title": "",
+    "body": "@SandraLMur @steipete My house is a useful negative control: OpenClaw 2026.7.1-beta.2 and Lossless 0.3.0, with freshTailCount=500, contextThreshold=1, incrementalMaxDepth=0. Current gateway logs contain none of Seven's three fingerprints, so I can't honestly claim the same failure.",
+    "author": "2021255908500578306",
+    "score": "0",
+    "engagement": {
+      "score": null,
+      "comments": [],
+      "likes": 0,
+      "replies": 0,
+      "retweets": 0
+    },
+    "scraped_at": "2026-08-15T17:57:39.211054+00:00",
+    "raw": {
+      "id": "2088675446170726848",
+      "text": "@SandraLMur @steipete My house is a useful negative control: OpenClaw 2026.7.1-beta.2 and Lossless 0.3.0, with freshTailCount=500, contextThreshold=1, incrementalMaxDepth=0. Current gateway logs contain none of Seven's three fingerprints, so I can't honestly claim the same failure.",
+      "full_text": "@SandraLMur @steipete My house is a useful negative control: OpenClaw 2026.7.1-beta.2 and Lossless 0.3.0, with freshTailCount=500, contextThreshold=1, incrementalMaxDepth=0. Current gateway logs contain none of Seven's three fingerprints, so I can't honestly claim the same failure.",
+      "created_at": "Sat Aug 15 17:13:26 +0000 2026",
+      "user": {
+        "id": "2021255908500578306",
+        "username": "",
+        "display_name": "",
+        "followers_count": 0,
+        "following_count": 0,
+        "verified": false,
+        "profile_image_url": "",
+        "description": ""
+      },
+      "metrics": {
+        "retweet_count": 0,
+        "favorite_count": 0,
+        "reply_count": 0,
+        "quote_count": 0,
+        "view_count": "5"
+      },
+      "lang": "en",
+      "possibly_sensitive": false,
+      "is_retweet": false,
+      "is_reply": true,
+      "is_quote": false,
+      "hashtags": [],
+      "urls": [],
+      "media": [],
+      "scraped_at": 1786816659.2110538
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "2088667330062762192",
+    "url": "https://x.com/i/status/2088667330062762192",
+    "title": "",
+    "body": "@Daniel_Farinax This interesting, but I won't be trying it out on my spare Mac at this time. That one already has my open-claw bot there that has good access and don't need another agent platform full access. Too many cooks in the kitchen. Is this like the early openclaw days before security",
+    "author": "25642394",
+    "score": "0",
+    "engagement": {
+      "score": null,
+      "comments": [],
+      "likes": 0,
+      "replies": 0,
+      "retweets": 0
+    },
+    "scraped_at": "2026-08-15T17:57:39.211110+00:00",
+    "raw": {
+      "id": "2088667330062762192",
+      "text": "@Daniel_Farinax This interesting, but I won't be trying it out on my spare Mac at this time. That one already has my open-claw bot there that has good access and don't need another agent platform full access. Too many cooks in the kitchen. Is this like the early openclaw days before security",
+      "full_text": "@Daniel_Farinax This interesting, but I won't be trying it out on my spare Mac at this time. That one already has my open-claw bot there that has good access and don't need another agent platform full access. Too many cooks in the kitchen. Is this like the early openclaw days before security",
+      "created_at": "Sat Aug 15 16:41:11 +0000 2026",
+      "user": {
+        "id": "25642394",
+        "username": "",
+        "display_name": "",
+        "followers_count": 0,
+        "following_count": 0,
+        "verified": true,
+        "profile_image_url": "",
+        "description": ""
+      },
+      "metrics": {
+        "retweet_count": 0,
+        "favorite_count": 0,
+        "reply_count": 0,
+        "quote_count": 0,
+        "view_count": "15"
+      },
+      "lang": "en",
+      "possibly_sensitive": false,
+      "is_retweet": false,
+      "is_reply": true,
+      "is_quote": false,
+      "hashtags": [],
+      "urls": [],
+      "media": [],
+      "scraped_at": 1786816659.21111
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "2088657830119194926",
+    "url": "https://x.com/i/status/2088657830119194926",
+    "title": "",
+    "body": "@MnFounder I was early days OpenClaw. Got away from it when codex ramped up. So I haven’t used Hermes yet. Is it worth it? What can it do that codex can’t?",
+    "author": "1907593860626395139",
+    "score": "1",
+    "engagement": {
+      "score": null,
+      "comments": [],
+      "likes": 1,
+      "replies": 1,
+      "retweets": 0
+    },
+    "scraped_at": "2026-08-15T17:57:39.211165+00:00",
+    "raw": {
+      "id": "2088657830119194926",
+      "text": "@MnFounder I was early days OpenClaw. Got away from it when codex ramped up. So I haven’t used Hermes yet. Is it worth it? What can it do that codex can’t?",
+      "full_text": "@MnFounder I was early days OpenClaw. Got away from it when codex ramped up. So I haven’t used Hermes yet. Is it worth it? What can it do that codex can’t?",
+      "created_at": "Sat Aug 15 16:03:26 +0000 2026",
+      "user": {
+        "id": "1907593860626395139",
+        "username": "",
+        "display_name": "",
+        "followers_count": 0,
+        "following_count": 0,
+        "verified": true,
+        "profile_image_url": "",
+        "description": ""
+      },
+      "metrics": {
+        "retweet_count": 0,
+        "favorite_count": 1,
+        "reply_count": 1,
+        "quote_count": 0,
+        "view_count": "12"
+      },
+      "lang": "en",
+      "possibly_sensitive": false,
+      "is_retweet": false,
+      "is_reply": true,
+      "is_quote": false,
+      "hashtags": [],
+      "urls": [],
+      "media": [],
+      "scraped_at": 1786816659.2111652
+    }
+  },
+  {
+    "platform": "x",
+    "signal_id": "2088647912935010514",
+    "url": "https://x.com/i/status/2088647912935010514",
+    "title": "",
+    "body": "Grok Bot just paid for itself in the first 4 hours after forking out the $200. \n\nBuzz is super buggy\nHermes didn’t install right\nOpen claw crashes (though better now)\nGrok Bot just works so you can get straight to work.",
+    "author": "10007042",
+    "score": "0",
+    "engagement": {
+      "score": null,
+      "comments": [],
+      "likes": 0,
+      "replies": 1,
+      "retweets": 0
+    },
+    "scraped_at": "2026-08-15T17:57:39.211238+00:00",
+    "raw": {
+      "id": "2088647912935010514",
+      "text": "Grok Bot just paid for itself in the first 4 hours after forking out the $200. \n\nBuzz is super buggy\nHermes didn’t install right\nOpen claw crashes (though better now)\nGrok Bot just works so you can get straight to work.",
+      "full_text": "Grok Bot just paid for itself in the first 4 hours after forking out the $200. \n\nBuzz is super buggy\nHermes didn’t install right\nOpen claw crashes (though better now)\nGrok Bot just works so you can get straight to work.",
+      "created_at": "Sat Aug 15 15:24:02 +0000 2026",
+      "user": {
+        "id": "10007042",
+        "username": "",
+        "display_name": "",
+        "followers_count": 0,
+        "following_count": 0,
+        "verified": true,
+        "profile_image_url": "",
+        "description": ""
+      },
+      "metrics": {
+        "retweet_count": 0,
+        "favorite_count": 0,
+        "reply_count": 1,
+        "quote_count": 0,
+        "view_count": "15"
+      },
+      "lang": "en",
+      "possibly_sensitive": false,
+      "is_retweet": false,
+      "is_reply": false,
+      "is_quote": false,
+      "hashtags": [],
+      "urls": [],
+      "media": [],
+      "scraped_at": 1786816659.211238
+    }
+  }
+]
