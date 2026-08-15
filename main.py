@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+import report_store
 from pipeline import MissingCredentials, preflight, run_stream
 from schema import ErrorEvent, Event, PreprocessRequest
 from scraping.routes import router as scrape_router
@@ -31,6 +32,16 @@ app.add_middleware(
 )
 app.include_router(scrape_router)
 
+# The dashboard is a separate Next.js origin in dev, so it cannot read these
+# routes without CORS. Open here because nothing served is private; tighten to
+# the deployed origin before this is public.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # demo_server.py flips this to "demo". Reported by /health so a client can tell
 # a real backend from a canned one before trusting its output.
 MODE = "live"
@@ -46,6 +57,24 @@ async def root() -> dict[str, str]:
 async def health() -> dict[str, str]:
     """Report whether the API is available, and whether it returns real data."""
     return {"status": "ok", "mode": MODE}
+
+
+@app.get("/reports")
+async def list_reports() -> dict[str, list[str]]:
+    """Product slugs with a stored report, for the dashboard's picker."""
+    return {"reports": report_store.list_slugs()}
+
+
+@app.get("/report/{slug}")
+async def get_report(slug: str) -> dict:
+    """The dashboard payload for one product: issues, evidence, health score."""
+    report = report_store.load(slug)
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no report for {slug!r}; available: {report_store.list_slugs()}",
+        )
+    return report
 
 
 def _frame(event: Event) -> str:
