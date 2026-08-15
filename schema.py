@@ -27,6 +27,10 @@ class PreprocessRequest(BaseModel):
         default=None,
         description="Free-text detail form. Treated as trusted, high-weight context.",
     )
+    stop_after: Literal["t0", "t1"] = Field(
+        default="t1",
+        description="Last stage to run. 't0' returns the dossier without scraping.",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -137,6 +141,96 @@ class ProductDossier(BaseModel):
 
 
 # --------------------------------------------------------------------------
+# T1 — sources and posts
+# --------------------------------------------------------------------------
+
+Platform = Literal["reddit", "x", "hackernews", "github"]
+
+
+class RedditTargets(BaseModel):
+    """Where on Reddit this product is actually discussed.
+
+    Subreddits alone miss most of it: in the reference scrape, 12 of 27 Reddit
+    signals came from site-wide search, in subreddits nobody would have listed
+    up front. So queries carry at least as much weight as subreddits.
+    """
+
+    subreddits: list[str] = Field(default_factory=list)
+    search_queries: list[str] = Field(default_factory=list)
+
+
+class HackerNewsTargets(BaseModel):
+    search_queries: list[str] = Field(default_factory=list)
+
+
+class ScrapeTargets(BaseModel):
+    """T1's output: what to scrape, derived from the dossier's discriminator."""
+
+    reddit: RedditTargets = Field(default_factory=RedditTargets)
+    hackernews: HackerNewsTargets = Field(default_factory=HackerNewsTargets)
+    rationale: str | None = Field(
+        default=None,
+        description="Why these targets, in one or two sentences. Shown to the "
+        "operator so a bad expansion is visible before budget is spent.",
+    )
+
+
+class PostComment(BaseModel):
+    author: str | None = None
+    body: str
+    score: int | None = None
+    depth: int = 0
+    url: str | None = None
+    is_op: bool = False
+
+
+class Post(BaseModel):
+    """One scraped discussion, normalized across platforms by scraping/mapper.py.
+
+    This is the frozen contract T2 consumes. Field names match mapper.py's
+    output exactly — it is the producer, this is the schema for what it makes.
+    """
+
+    id: str
+    source: Platform
+    source_id: str | None = None
+    url: str
+    channel: str | None = None
+    title: str | None = None
+    body: str = ""
+    author: str | None = None
+    created_at: str | None = None
+    created_at_is_scrape_time: bool = False
+    score: int | None = None
+    num_comments: int | None = None
+    comments: list[PostComment] = Field(default_factory=list)
+    scraped_at: str | None = None
+    search_query: str | None = None
+    language: str = "en"
+    relevance: float | None = None
+
+
+class Harvest(BaseModel):
+    """T1's result: the targets chosen, and what came back from them."""
+
+    targets: ScrapeTargets
+    posts: list[Post] = Field(default_factory=list)
+    live: bool = Field(
+        description="True when posts came from a live scrape. False means the "
+        "scraper was unreachable and fixtures were substituted."
+    )
+    source_note: str
+    mapping_errors: list[str] = Field(default_factory=list)
+
+
+class FieldNote(BaseModel):
+    """Everything the run produced. Grows a field per stage as T2-T5 land."""
+
+    dossier: ProductDossier
+    harvest: Harvest | None = None
+
+
+# --------------------------------------------------------------------------
 # SSE events
 # --------------------------------------------------------------------------
 
@@ -148,13 +242,21 @@ Stage = Literal[
     "find_similar",
     "search_context",
     "synthesize",
+    # T1
+    "select_sources",
+    "scrape_reddit",
+    "scrape_hackernews",
+    "map_posts",
 ]
 
 
 class StageEvent(BaseModel):
     event: Literal["stage"] = "stage"
     stage: Stage
-    status: Literal["running", "done"]
+    # "failed" means the stage finished having produced nothing. The run
+    # continues — every stage is degradable — but the row should not read as a
+    # success in the UI.
+    status: Literal["running", "done", "failed"]
     detail: str | None = None
 
 
@@ -165,9 +267,33 @@ class ErrorEvent(BaseModel):
     fatal: bool = False
 
 
-class ResultEvent(BaseModel):
-    event: Literal["result"] = "result"
+class DossierEvent(BaseModel):
+    """T0 landed. Emitted before T1 starts so the CLI can render it during the
+    minutes the scrape takes, rather than holding a finished dossier back."""
+
+    event: Literal["dossier"] = "dossier"
     dossier: ProductDossier
 
 
-Event = StageEvent | ErrorEvent | ResultEvent
+class HarvestEvent(BaseModel):
+    event: Literal["harvest"] = "harvest"
+    harvest: Harvest
+
+
+class HeartbeatEvent(BaseModel):
+    """Keeps the connection and the UI alive across a multi-minute scrape."""
+
+    event: Literal["heartbeat"] = "heartbeat"
+    elapsed_ms: int
+
+
+class ResultEvent(BaseModel):
+    """Terminal event. Always last, always exactly one."""
+
+    event: Literal["result"] = "result"
+    note: FieldNote
+
+
+Event = (
+    StageEvent | ErrorEvent | DossierEvent | HarvestEvent | HeartbeatEvent | ResultEvent
+)

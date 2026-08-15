@@ -49,19 +49,26 @@ cp .env.example .env
 
 - `GET /` — returns a greeting
 - `GET /health` — returns API health
-- `POST /preprocess` — **T0 product understanding**, streamed as SSE
+- `POST /preprocess` — runs the pipeline (**T0** then **T1**), streamed as SSE
 
 ### `POST /preprocess`
 
-Body: `{"website": "...", "name": "...", "repo": "owner/repo", "form": "..."}`.
-Only `website` is required; the repo is deliberately optional so users need not
-expose private repositories at onboarding.
+Body: `{"website": "...", "name": "...", "repo": "owner/repo", "form": "...",
+"stop_after": "t0"}`. Only `website` is required; the repo is deliberately
+optional so users need not expose private repositories at onboarding.
+`stop_after: "t0"` returns the dossier without scraping.
 
 Responds with `text/event-stream`:
 
 - `stage` — progress per pipeline stage
 - `error` — a degraded source (`fatal: false`) or an aborted run (`fatal: true`)
-- `result` — the finished `ProductDossier`
+- `heartbeat` — emitted while a scrape runs, so a multi-minute silence does not
+  look like a hang or get a connection dropped by a proxy
+- `dossier` — T0's `ProductDossier`, published as soon as it lands rather than
+  held until the end, so a client has something to render during the scrape
+- `harvest` — T1's chosen targets and scraped posts
+- `result` — the terminal event, exactly one per run, carrying the whole
+  `FieldNote`
 
 ```bash
 curl -N -X POST localhost:8000/preprocess \
@@ -75,7 +82,9 @@ curl -N -X POST localhost:8000/preprocess \
 |---|---|
 | `main.py` | HTTP: validation, SSE framing, status codes |
 | `pipeline.py` | Which stages run, in what order |
-| `preprocess.py` | The T0 implementation |
+| `preprocess.py` | T0 — product understanding |
+| `sources.py` | T1 — which sources to scrape |
+| `harvest.py` | T1 — scraping them, and the fixture fallback |
 | `schema.py` | Contracts |
 
 Every route goes through `pipeline.py`, so `main.py` never imports a stage
@@ -84,10 +93,15 @@ the same stream and neither the HTTP layer nor the CLI has to change to pick
 them up.
 
 ```python
+from pipeline import run_stream      # -> AsyncIterator[Event], the whole pipeline
 from pipeline import run_t0          # -> ProductDossier
-from pipeline import run_t0_stream   # -> AsyncIterator[Event]
+from pipeline import run_t0_stream   # -> AsyncIterator[Event], T0 only
 from pipeline import preflight       # credential check, before any spend
 ```
+
+Every run ends with exactly one `ResultEvent` carrying a `FieldNote`. Each stage
+fills in its own field of it — T0 the dossier, T1 the harvest — so adding T2 is
+one more `async for` in `pipeline.py` and one more field on `FieldNote`.
 
 ## How T0 works
 
@@ -132,3 +146,55 @@ it straight from the pydantic models instead:
 ```bash
 uv run python scripts/export_openapi.py > openapi.json
 ```
+
+## How T1 works
+
+Two halves, deliberately split: choosing where to look is cheap, reversible and
+worth testing; the scrape itself is slow and external.
+
+### `sources.py` — where to look
+
+One Grok call turns the dossier into subreddits and search queries. This is
+where T0's disambiguation work is finally spent: the collisions, the negative
+signals and the no-namesake jargon all go into the prompt, so a product with a
+crowded name never gets a bare-name query.
+
+Search queries matter more than subreddits. In the reference scrape 12 of 27
+Reddit signals came from site-wide search, in subreddits nobody would have
+listed up front — a subreddit-only scraper finds none of them.
+
+The caps (4 subreddits, 4 Reddit queries, 3 HN queries) are applied to the
+answer rather than asked for in the prompt, because a model told "at most four"
+still returns seven. If the call fails, `fallback_targets` builds a weaker set
+from the dossier alone — a weak scrape beats no scrape.
+
+### `harvest.py` — doing the scrape
+
+Drives social-signals over `POST /v1/jobs/watch`, polls it, and normalizes the
+result through `scraping/mapper.py` into the frozen `Post` contract. Routing
+through the mapper rather than `assets.Signal` is deliberate: the mapper
+handles HackerNews, `assets.py` still does not.
+
+Reddit takes 3-5 minutes per target and needs live browser cookies, which makes
+it the least reliable thing in the pipeline. When it fails, the recorded
+signals in `scraping/data/` are substituted rather than ending the run — but
+never silently:
+
+- `Harvest.live` goes `false`
+- a non-fatal `error` event names the substitution
+- the reason lands in `mapping_errors`
+
+**Those recordings are about Perplexity.** A fallback run is for proving the
+plumbing or rehearsing a demo, not for reading a real product's feedback. Pass
+`allow_fixtures=False` to a caller that would rather have nothing than the
+wrong product's data.
+
+### Pointing at a scraper
+
+```bash
+SOCIAL_SIGNALS_URL=http://127.0.0.1:8899
+SOCIAL_SIGNALS_API_KEY=demo-key
+```
+
+Neither is checked by `preflight` — an unreachable scraper degrades a run, it
+does not stop one. See `scraping/README.md` for standing the service up.

@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
-from pipeline import MissingCredentials, preflight, run_t0_stream
+from pipeline import MissingCredentials, preflight, run_stream
 from schema import ErrorEvent, Event, PreprocessRequest
 
 app = FastAPI(
@@ -59,8 +59,10 @@ async def as_sse(events: AsyncIterator[Event]) -> AsyncIterator[str]:
             "200": {
                 "description": (
                     "Server-sent events. `stage` events report progress, "
-                    "non-fatal `error` events report degraded sources, and a "
-                    "final `result` event carries the ProductDossier."
+                    "non-fatal `error` events report degraded sources, "
+                    "`heartbeat` keeps a long scrape alive, `dossier` and "
+                    "`harvest` carry each stage's output as it lands, and a "
+                    "final `result` event carries the whole FieldNote."
                 ),
                 "content": {"text/event-stream": {"schema": {"type": "string"}}},
             }
@@ -77,7 +79,7 @@ async def run_preprocess(req: PreprocessRequest) -> StreamingResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return StreamingResponse(
-        as_sse(run_t0_stream(req)),
+        as_sse(run_stream(req)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

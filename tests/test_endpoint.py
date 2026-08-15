@@ -12,6 +12,8 @@ from schema import (
     Identity,
     ProductDossier,
     Provenance,
+    DossierEvent,
+    FieldNote,
     ResultEvent,
     StageEvent,
     Vocabulary,
@@ -45,19 +47,23 @@ def _parse(body: str) -> list[tuple[str, dict]]:
 def test_stream_frames_stage_events_then_result(monkeypatch) -> None:
     async def fake_stream(req):
         yield StageEvent(stage="map", status="done", detail="3 pages found")
-        yield ResultEvent(dossier=_dossier())
+        yield DossierEvent(dossier=_dossier())
+        yield ResultEvent(note=FieldNote(dossier=_dossier()))
 
     monkeypatch.setattr(main, "preflight", lambda: None)
-    monkeypatch.setattr(main, "run_t0_stream", fake_stream)
+    monkeypatch.setattr(main, "run_stream", fake_stream)
 
     with client.stream("POST", "/preprocess", json={"website": "https://acme.dev"}) as r:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
         events = _parse("".join(r.iter_text()))
 
-    assert [name for name, _ in events] == ["stage", "result"]
+    assert [name for name, _ in events] == ["stage", "dossier", "result"]
     assert events[0][1]["detail"] == "3 pages found"
+    # The dossier is published as soon as T0 lands, so the CLI can render it
+    # during the minutes T1 spends scraping.
     assert events[1][1]["dossier"]["identity"]["canonical_name"] == "Acme"
+    assert events[2][1]["note"]["dossier"]["identity"]["canonical_name"] == "Acme"
 
 
 def test_midstream_failure_becomes_a_fatal_event(monkeypatch) -> None:
@@ -66,7 +72,7 @@ def test_midstream_failure_becomes_a_fatal_event(monkeypatch) -> None:
         raise RuntimeError("grok fell over")
 
     monkeypatch.setattr(main, "preflight", lambda: None)
-    monkeypatch.setattr(main, "run_t0_stream", boom)
+    monkeypatch.setattr(main, "run_stream", boom)
 
     with client.stream("POST", "/preprocess", json={"website": "https://acme.dev"}) as r:
         events = _parse("".join(r.iter_text()))

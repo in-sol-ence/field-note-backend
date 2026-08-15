@@ -14,7 +14,7 @@ from schema import (
     PreprocessRequest,
     ProductDossier,
     Provenance,
-    ResultEvent,
+    DossierEvent,
     StageEvent,
     Vocabulary,
     What,
@@ -44,7 +44,7 @@ def stub_t0(monkeypatch):
     async def fake_stream(website, repo, form, name):
         seen.update(website=website, repo=repo, form=form, name=name)
         yield StageEvent(stage="map", status="done")
-        yield ResultEvent(dossier=_dossier())
+        yield DossierEvent(dossier=_dossier())
 
     monkeypatch.setattr(pipeline, "preprocess_stream", fake_stream)
     return seen
@@ -71,7 +71,7 @@ def test_pipeline_passes_stage_events_through_untouched(stub_t0) -> None:
     events = asyncio.run(go())
 
     assert isinstance(events[0], StageEvent)
-    assert isinstance(events[-1], ResultEvent)
+    assert isinstance(events[-1], DossierEvent)
 
 
 def test_run_t0_collects_just_the_dossier(stub_t0) -> None:
@@ -105,3 +105,93 @@ def test_http_layer_does_not_reach_past_pipeline() -> None:
 
     assert "from preprocess import" not in source
     assert "from pipeline import" in source
+
+
+# --------------------------------------------------------------------------
+# T0 -> T1 chaining
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def stub_t1(monkeypatch):
+    """Replace both halves of T1 so we test the chain, not the scraper."""
+    from schema import Harvest, HarvestEvent, RedditTargets, ScrapeTargets
+
+    picked = ScrapeTargets(reddit=RedditTargets(subreddits=["acme"]))
+
+    async def fake_select(dossier):
+        return picked
+
+    async def fake_harvest(targets, **kw):
+        yield StageEvent(stage="scrape_reddit", status="done", detail="2 signals")
+        yield HarvestEvent(
+            harvest=Harvest(targets=targets, posts=[], live=True, source_note="live scrape")
+        )
+
+    monkeypatch.setattr(pipeline, "select_targets", fake_select)
+    monkeypatch.setattr(pipeline, "harvest_stream", fake_harvest)
+    return picked
+
+
+def _kinds(events):
+    return [e.event for e in events]
+
+
+def test_a_full_run_ends_with_one_result_carrying_both_stages(stub_t0, stub_t1) -> None:
+    from schema import ResultEvent
+
+    events = asyncio.run(_collect(REQ))
+
+    assert _kinds(events).count("result") == 1
+    assert isinstance(events[-1], ResultEvent)
+    note = events[-1].note
+    assert note.dossier.identity.canonical_name == "Acme"
+    assert note.harvest is not None
+    assert note.harvest.targets == stub_t1
+
+
+def test_the_dossier_is_published_before_the_scrape_starts(stub_t0, stub_t1) -> None:
+    """T1 takes minutes. Holding a finished dossier until the end would leave
+    the CLI with nothing to render while it waits."""
+    kinds = _kinds(asyncio.run(_collect(REQ)))
+    assert kinds.index("dossier") < kinds.index("harvest")
+
+
+def test_stop_after_t0_skips_the_scrape_entirely(stub_t0, stub_t1) -> None:
+    events = asyncio.run(_collect(REQ.model_copy(update={"stop_after": "t0"})))
+
+    assert "harvest" not in _kinds(events)
+    assert events[-1].note.harvest is None
+    assert events[-1].note.dossier.identity.canonical_name == "Acme"
+
+
+def test_source_selection_failing_degrades_to_fallback_targets(stub_t0, stub_t1, monkeypatch) -> None:
+    """A dead LLM call costs the run its best targets, not the run."""
+    from schema import ErrorEvent
+
+    async def boom(dossier):
+        raise RuntimeError("xai timed out")
+
+    monkeypatch.setattr(pipeline, "select_targets", boom)
+    events = asyncio.run(_collect(REQ))
+
+    warnings = [e for e in events if isinstance(e, ErrorEvent)]
+    assert warnings and not any(w.fatal for w in warnings)
+    assert events[-1].note.harvest is not None, "the scrape still ran"
+
+
+def test_a_t0_that_never_produces_a_dossier_ends_the_run_fatally(monkeypatch, stub_t1) -> None:
+    from schema import ErrorEvent
+
+    async def empty(website, repo, form, name):
+        yield StageEvent(stage="map", status="failed")
+
+    monkeypatch.setattr(pipeline, "preprocess_stream", empty)
+    events = asyncio.run(_collect(REQ))
+
+    assert isinstance(events[-1], ErrorEvent)
+    assert events[-1].fatal is True
+
+
+async def _collect(req):
+    return [e async for e in pipeline.run_stream(req)]
