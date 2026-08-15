@@ -154,9 +154,17 @@ X can be scraped through the field-note API without standing up social-signals:
 
 | `provider` | Backend |
 |---|---|
-| `x-scraper` (default) | Local Playwright checkout (`X_SCRAPER_ROOT`, else `../x-scraper`) |
+| `x-scraper` (default) | Git submodule `./x-scraper` (`X_SCRAPER_ROOT` override) |
 | `social-signals` | Remote `POST /v1/jobs/watch` on `SOCIAL_SIGNALS_URL` |
 | `fixture` | Load Signal/tweet JSON (`fixture_path` / `X_SCRAPE_FIXTURE`) |
+
+```bash
+# Init the scraper submodule (needed for live X, not for fixtures)
+git submodule update --init --recursive
+cd x-scraper && python -m venv .venv && . .venv/bin/activate
+pip install -e . && playwright install chromium
+cp config.ini.template config.ini
+```
 
 ```bash
 # Offline (uses existing Signal JSON)

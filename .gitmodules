@@ -1,0 +1,3 @@
+[submodule "x-scraper"]
+	path = x-scraper
+	url = https://github.com/gwild/x-scraper.git

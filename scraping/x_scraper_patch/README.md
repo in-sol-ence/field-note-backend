@@ -1,23 +1,16 @@
-# x-scraper patch
+# x-scraper patch notes
 
-Patches on top of [proxidize/x-scraper](https://github.com/proxidize/x-scraper) that field-note's
-`POST /scrape/x` (`provider: x-scraper`) depends on.
+Live X scraping uses the **`x-scraper` git submodule** at the repo root
+([gwild/x-scraper](https://github.com/gwild/x-scraper)) — Fieldnotes' patched
+fork of Proxidize.
 
-Copy over a checkout of x-scraper:
-
+```bash
+git submodule update --init --recursive
+cd x-scraper && python -m venv .venv && . .venv/bin/activate
+pip install -e . && playwright install chromium
+cp config.ini.template config.ini
 ```
-x_scraper_patch/src/playwright_scraper.py -> src/playwright_scraper.py
-x_scraper_patch/src/scraper.py            -> src/scraper.py
-x_scraper_patch/cli/user.py               -> cli/user.py
-```
 
-What changed vs upstream:
-
-1. Honor `-n/--count` as the session tweet cap (upstream ignored it when
-   `max_tweets_per_session` was unset in config).
-2. Louder `[scrape]` progress + GraphQL op logging when X renames endpoints.
-3. DOM fallback when GraphQL timeline parse returns nothing.
-4. Manual-login cookie capture when automated X login is blocked.
-5. Linux-friendly browser fingerprint defaults.
-
-Point `X_SCRAPER_ROOT` at that checkout (default: sibling `../x-scraper`).
+`X_SCRAPER_ROOT` defaults to that submodule. The files in this folder are a
+snapshot of the same patches for reference if the submodule is missing; prefer
+the submodule checkout for running scrapes.
