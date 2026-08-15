@@ -291,3 +291,66 @@ def test_the_repair_pass_is_announced(monkeypatch) -> None:
     with pytest.raises(ValueError):
         asyncio.run(go())
     assert any("repairing the schema" in n for n in notes), notes
+
+
+def _no_stream_llm(text: str, fail_after: int = 0):
+    """A client that refuses to stream, or dies `fail_after` chunks in, and
+    answers the plain request normally."""
+
+    async def create(**kwargs):
+        if not kwargs.get("stream"):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=text))]
+            )
+
+        async def chunks():
+            for i in range(fail_after):
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content=text[i : i + 1]))]
+                )
+            raise RuntimeError("stream_unsupported: response_format with stream")
+
+        if fail_after:
+            return chunks()
+        raise RuntimeError("stream_unsupported: response_format with stream")
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+def _settings(monkeypatch) -> None:
+    monkeypatch.setattr(preprocess, "get_settings", lambda: Settings(
+        firecrawl_api_key="k", exa_api_key="k", xai_api_key="k"
+    ))
+
+
+def test_a_provider_that_will_not_stream_still_produces_a_dossier(monkeypatch) -> None:
+    """The notes are a nicety, the dossier is the product: losing progress text
+    must not lose the run."""
+    text = _draft(REAL_COLLISION).model_dump_json()
+    monkeypatch.setattr(preprocess, "_llm", lambda: _no_stream_llm(text))
+    _settings(monkeypatch)
+
+    async def go():
+        return [step async for step in preprocess._synthesize(text, blocks=12)]
+
+    steps = asyncio.run(go())
+
+    assert isinstance(steps[-1], SynthesisDraft)
+    notes = [s for s in steps if isinstance(s, str)]
+    # And it says so, with the reason — a silent fallback is the blind minute
+    # this whole change exists to remove.
+    assert any("drafting blind" in n and "stream_unsupported" in n for n in notes), notes
+
+
+def test_a_stream_that_dies_mid_draft_is_not_retried_blind(monkeypatch) -> None:
+    # Half a draft already cost half the tokens. Paying again for the same
+    # call is worse than surfacing the failure.
+    text = _draft(REAL_COLLISION).model_dump_json()
+    monkeypatch.setattr(preprocess, "_llm", lambda: _no_stream_llm(text, fail_after=20))
+    _settings(monkeypatch)
+
+    async def go():
+        return [step async for step in preprocess._synthesize(text, blocks=12)]
+
+    with pytest.raises(RuntimeError, match="stream_unsupported"):
+        asyncio.run(go())

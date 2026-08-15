@@ -532,30 +532,52 @@ async def _synthesize(prompt: str, blocks: int) -> AsyncIterator[str | Synthesis
         # Streamed for the notes, not for the output: the draft is only usable
         # once it is whole, but the tokens on the way tell the operator which
         # part of the dossier is being written right now.
-        stream = await client.chat.completions.create(
-            model=s.llm_model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            stream=True,
-        )
         parts: list[str] = []
         written, tail, seen = 0, "", set()
         last_note = time.monotonic()
-        async for chunk in stream:
-            piece = chunk.choices[0].delta.content or "" if chunk.choices else ""
-            if not piece:
-                continue
-            parts.append(piece)
-            written += len(piece)
-            tail = (tail + piece)[-_TAIL_WINDOW:]
-            if label := _section_reached(tail, seen):
-                section = label
-            elif time.monotonic() - last_note < _NOTE_EVERY:
-                continue
-            yield _draft_note(s.llm_model, section, written)
-            last_note = time.monotonic()
+        try:
+            stream = await client.chat.completions.create(
+                model=s.llm_model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                stream=True,
+            )
+            async for chunk in stream:
+                piece = chunk.choices[0].delta.content or "" if chunk.choices else ""
+                if not piece:
+                    continue
+                parts.append(piece)
+                written += len(piece)
+                tail = (tail + piece)[-_TAIL_WINDOW:]
+                if label := _section_reached(tail, seen):
+                    section = label
+                elif time.monotonic() - last_note < _NOTE_EVERY:
+                    continue
+                yield _draft_note(s.llm_model, section, written)
+                last_note = time.monotonic()
+            raw = "".join(parts)
+        except Exception as exc:  # noqa: BLE001 - degrade, don't die
+            # The notes are a nicety; the dossier is the product. A provider
+            # that will not stream this request still answers it in one piece,
+            # so fall back rather than failing the run for want of progress
+            # text. A stream that died mid-draft is a real failure, though —
+            # retrying it blind would pay for the same tokens twice.
+            if written:
+                raise
+            # The reason rides along in the note rather than a log line: this
+            # module reports everything else it survives to the operator, and
+            # a silent fallback is exactly the blind minute being fixed here.
+            reason = str(exc).splitlines()[0][:60] or type(exc).__name__
+            section = f"cannot stream ({reason}), drafting blind"
+            yield _draft_note(s.llm_model, section, 0)
+            resp = await client.chat.completions.create(
+                model=s.llm_model,
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+            raw = resp.choices[0].message.content or ""
 
-        raw = "".join(parts) or "{}"
+        raw = raw or "{}"
         try:
             yield SynthesisDraft.model_validate_json(raw)
             return
