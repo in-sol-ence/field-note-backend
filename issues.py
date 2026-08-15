@@ -9,6 +9,7 @@ from xai_sdk.tools import web_search, x_search
 
 from assets import Issue, LovedFeature, RecommendedFeature, Signal, SignalFindings
 from models import call_grok
+from schema import ProductDossier
 
 extract_signals_prompt = """
 Analyze the single customer signal below and extract only clearly supported
@@ -27,7 +28,12 @@ Rules:
 - Evidence must contain short, exact quotes from the title, body, or comments.
 - Do not classify engagement, popularity, or the author's identity as a finding.
 - Return at most one finding in each category.
+- Use the product dossier to disambiguate the product and its features. Ignore
+  signals that refer to a namesake or a different product.
 - Follow the provided structured output schema exactly.
+
+Product dossier:
+{dossier_json}
 
 Signal:
 {signal_json}
@@ -44,7 +50,11 @@ Rules:
 - Deduplicate evidence and keep only the strongest short quotes.
 - Use a short canonical title and a one-sentence canonical summary.
 - Return findings only in the supplied category; leave the other arrays empty.
+- Keep findings scoped to the product described by the dossier.
 - Follow the structured output schema exactly.
+
+Product dossier:
+{dossier_json}
 
 Category: {category}
 Product area: {product_area}
@@ -63,7 +73,11 @@ Rules:
 - Keep genuinely different user needs separate.
 - Produce a concise canonical title and one-sentence summary for every result.
 - Return findings only in the supplied category; leave the other arrays empty.
+- Keep findings scoped to the product described by the dossier.
 - Follow the structured output schema exactly.
+
+Product dossier:
+{dossier_json}
 
 Category: {category}
 Product area: {product_area}
@@ -88,7 +102,12 @@ Rules:
 - Never invent sources or signal IDs.
 - Include only URLs actually inspected through search in sources.
 - Keep the explanation to one concise sentence.
+- Confirm that the evidence concerns the product in the dossier, not a
+  namesake or adjacent product.
 - Follow the structured output schema exactly.
+
+Product dossier:
+{dossier_json}
 
 Finding:
 {finding_json}
@@ -109,13 +128,44 @@ class ValidationResult:
     explanation: str
     sources: list[str]
 
-async def analyze_signals(signals: list[Signal]) -> SignalFindings:
-    findings: SignalFindings = await extract_issues(signals)
-    merged: SignalFindings = await merge_issues(findings)
-    await validate_issues(merged, signals)
+
+def _dossier_json(dossier: ProductDossier | None) -> str:
+    """Serialize product context for every Grok stage."""
+    if dossier is None:
+        return '{"context":"No product dossier supplied by this legacy caller."}'
+    return dossier.model_dump_json(exclude_none=True)
+
+
+async def analyze_results(
+    signals: list[Signal], dossier: ProductDossier
+) -> SignalFindings:
+    """Analyze scraper results in the context of the preprocessed product."""
+    if not isinstance(signals, list) or any(not isinstance(s, Signal) for s in signals):
+        raise TypeError("scraper results must be a list of assets.Signal objects")
+
+    findings = await extract_issues(signals, dossier)
+    merged = await merge_issues(findings, dossier)
+    await validate_issues(merged, signals, dossier)
     return merged
 
-async def extract_issues(signals: list[Signal]) -> SignalFindings:
+
+async def analyze_signals(
+    signals: list[Signal], dossier: ProductDossier | None = None
+) -> SignalFindings:
+    """Legacy entry point; new pipeline code should call ``analyze_results``."""
+    if dossier is None:
+        # Preserve the standalone fixture visualizer. Production orchestration
+        # always uses analyze_results, where dossier is required.
+        findings = await extract_issues(signals, None)
+        merged = await merge_issues(findings, None)
+        await validate_issues(merged, signals, None)
+        return merged
+    return await analyze_results(signals, dossier)
+
+
+async def extract_issues(
+    signals: list[Signal], dossier: ProductDossier | None = None
+) -> SignalFindings:
     """Extract findings with one concurrent Grok call per signal."""
     # Drop bulky raw payloads before sending to the model.
     calls = []
@@ -125,7 +175,8 @@ async def extract_issues(signals: list[Signal]) -> SignalFindings:
         calls.append(
             call_grok(
                 extract_signals_prompt.format(
-                    signal_json=json.dumps(payload, ensure_ascii=False)
+                    dossier_json=_dossier_json(dossier),
+                    signal_json=json.dumps(payload, ensure_ascii=False),
                 ),
                 SignalFindings,
             )
@@ -195,7 +246,9 @@ def _compact_finding(finding: Finding) -> dict:
     return compact
 
 
-async def merge_issues(findings: SignalFindings) -> SignalFindings:
+async def merge_issues(
+    findings: SignalFindings, dossier: ProductDossier | None = None
+) -> SignalFindings:
     """Merge batches of four, then deduplicate their canonical descriptions."""
     batch_calls = []
     for (category, product_area), bucket in create_issue_buckets(findings).items():
@@ -204,6 +257,7 @@ async def merge_issues(findings: SignalFindings) -> SignalFindings:
             batch_calls.append(
                 call_grok(
                     merge_signals_prompt.format(
+                        dossier_json=_dossier_json(dossier),
                         category=category,
                         product_area=product_area,
                         findings_json=json.dumps(
@@ -225,6 +279,7 @@ async def merge_issues(findings: SignalFindings) -> SignalFindings:
     canonical_calls = [
         call_grok(
             canonicalize_signals_prompt.format(
+                dossier_json=_dossier_json(dossier),
                 category=category,
                 product_area=product_area,
                 findings_json=json.dumps(
@@ -245,6 +300,7 @@ async def merge_issues(findings: SignalFindings) -> SignalFindings:
         merged.loved_features.extend(result.loved_features)
     return merged
 
+
 def _compact_signal(signal: Signal) -> dict:
     return {
         "platform": signal.platform,
@@ -259,6 +315,7 @@ def _compact_signal(signal: Signal) -> dict:
 async def validate_issues(
     findings: SignalFindings,
     signals: list[Signal],
+    dossier: ProductDossier | None = None,
 ) -> list[ValidationResult]:
     """Validate every finding concurrently with Grok's search tools."""
     signals_by_id = {signal.signal_id: signal for signal in signals}
@@ -278,6 +335,7 @@ async def validate_issues(
         calls.append(
             call_grok(
                 validate_signals_prompt.format(
+                    dossier_json=_dossier_json(dossier),
                     finding_json=json.dumps(asdict(finding), ensure_ascii=False),
                     signals_json=json.dumps(supporting_signals, ensure_ascii=False),
                 ),

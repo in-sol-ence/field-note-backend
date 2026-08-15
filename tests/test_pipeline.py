@@ -7,7 +7,8 @@ import pytest
 import main
 import pipeline
 import preprocess
-from pipeline import MissingCredentials, preflight, run_t0, run_t0_stream
+from assets import Engagement, Signal, SignalFindings
+from pipeline import MissingCredentials, preflight, run_analysis, run_t0, run_t0_stream
 from schema import (
     Disambiguation,
     Identity,
@@ -78,6 +79,46 @@ def test_run_t0_collects_just_the_dossier(stub_t0) -> None:
     dossier = asyncio.run(run_t0(REQ))
 
     assert dossier.identity.canonical_name == "Acme"
+
+
+def test_run_analysis_passes_dossier_to_scraper_and_analyzer(stub_t0, monkeypatch) -> None:
+    signal = Signal(
+        platform="x",
+        signal_id="1",
+        url="https://x.com/acme/status/1",
+        title="",
+        body="Acme crashes",
+        author="user",
+        score="0",
+        engagement=Engagement(),
+        scraped_at="2026-01-01T00:00:00Z",
+        raw={},
+    )
+    seen = {}
+
+    def fake_scrape_x(**kwargs):
+        seen["scraper_dossier"] = kwargs["dossier"]
+        return [signal]
+
+    async def fake_analyze_results(signals, dossier):
+        seen["analysis"] = (signals, dossier)
+        return SignalFindings([], [], [])
+
+    monkeypatch.setattr(pipeline, "scrape_x", fake_scrape_x)
+    monkeypatch.setattr(pipeline, "analyze_results", fake_analyze_results)
+
+    result = asyncio.run(run_analysis(REQ))
+
+    assert seen["scraper_dossier"] is result.dossier
+    assert seen["analysis"] == ([signal], result.dossier)
+    assert result.signals == [signal]
+
+
+def test_run_analysis_stops_on_non_signal_scraper_output(stub_t0, monkeypatch) -> None:
+    monkeypatch.setattr(pipeline, "scrape_x", lambda **_kwargs: [{"not": "a signal"}])
+
+    with pytest.raises(TypeError, match="assets.Signal"):
+        asyncio.run(run_analysis(REQ))
 
 
 def test_run_t0_raises_when_no_dossier_arrives(monkeypatch) -> None:

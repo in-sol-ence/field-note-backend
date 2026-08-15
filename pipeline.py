@@ -14,17 +14,34 @@ Layering:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 
+from assets import Signal, SignalFindings
+from issues import analyze_results
 from preprocess import MissingCredentials, preprocess_stream, require_keys
 from schema import Event, PreprocessRequest, ProductDossier, ResultEvent
+from scraping.x_providers import scrape_x
 
 __all__ = [
     "MissingCredentials",
     "preflight",
+    "AnalysisResult",
+    "run_analysis",
     "run_t0",
     "run_t0_stream",
 ]
+
+
+@dataclass
+class AnalysisResult:
+    """Output of the wired T0 -> scraper -> issue-analysis pipeline."""
+
+    dossier: ProductDossier
+    signals: list[Signal]
+    findings: SignalFindings
 
 
 def preflight() -> None:
@@ -57,3 +74,24 @@ async def run_t0(req: PreprocessRequest) -> ProductDossier:
         if isinstance(event, ResultEvent):
             return event.dossier
     raise RuntimeError("pipeline ended without producing a dossier")
+
+
+async def run_analysis(
+    req: PreprocessRequest,
+    *,
+    scrape_kwargs: dict[str, Any] | None = None,
+) -> AnalysisResult:
+    """Run preprocessing, scrape with its dossier, then analyze both together."""
+    dossier = await run_t0(req)
+    kwargs = dict(scrape_kwargs or {})
+    if "dossier" in kwargs:
+        raise ValueError("run_analysis supplies the dossier to the scraper")
+
+    # The scraper is synchronous (and can run Playwright/poll HTTP), so keep it
+    # off the event loop used by Grok's asynchronous analysis calls.
+    signals = await asyncio.to_thread(scrape_x, dossier=dossier, **kwargs)
+    if not isinstance(signals, list) or any(not isinstance(s, Signal) for s in signals):
+        raise TypeError("scraper must return a list of assets.Signal objects")
+
+    findings = await analyze_results(signals, dossier)
+    return AnalysisResult(dossier=dossier, signals=signals, findings=findings)
