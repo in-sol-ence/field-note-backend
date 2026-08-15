@@ -11,7 +11,7 @@ from schema import (
     ErrorEvent,
     Identity,
     NameCollision,
-    ResultEvent,
+    DossierEvent,
     StageEvent,
     SynthesisDraft,
     Vocabulary,
@@ -104,7 +104,7 @@ def _run(**kwargs):
 
 
 def _dossier(events):
-    return next(e.dossier for e in events if isinstance(e, ResultEvent))
+    return next(e.dossier for e in events if isinstance(e, DossierEvent))
 
 
 def test_happy_path_produces_a_dossier(wired) -> None:
@@ -160,7 +160,7 @@ def test_rival_hits_are_citable_so_the_guard_does_not_drop_them(wired) -> None:
 def test_stream_reports_stages_and_ends_with_result(wired) -> None:
     events = _run(website=SITE, repo="acme/acme", name="Acme")
 
-    assert isinstance(events[-1], ResultEvent)
+    assert isinstance(events[-1], DossierEvent)
     done = {e.stage for e in events if isinstance(e, StageEvent) and e.status == "done"}
     assert {"map", "scrape_site", "search_collisions", "synthesize"} <= done
 

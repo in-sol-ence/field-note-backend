@@ -4,6 +4,10 @@ Everything a client touches is genuine: FastAPI routing, preflight, SSE framing
 and the pydantic models. Only preprocess_stream is swapped for a canned Cursor
 dossier, so this exercises the whole wiring without spending a credit.
 
+T1 is only half-faked: source selection is canned, but the scrape itself runs
+for real, which means it exercises the live-scraper-then-fixtures fallback
+exactly as a real run would.
+
 Two uses: verifying the plumbing when you have no keys, and rehearsing the demo
 without betting it on three external APIs staying up.
 
@@ -18,8 +22,9 @@ from datetime import datetime, timezone
 
 import pipeline
 from schema import (
-    Disambiguation, Identity, NameCollision, PackageRef, ProductDossier,
-    Provenance, ResultEvent, Source, StageEvent, Vocabulary, What,
+    Disambiguation, DossierEvent, HackerNewsTargets, Identity, NameCollision,
+    PackageRef, ProductDossier, Provenance, RedditTargets, ScrapeTargets,
+    Source, StageEvent, Vocabulary, What,
 )
 
 NOW = datetime.now(timezone.utc)
@@ -94,10 +99,27 @@ async def fake_stream(website, repo, form, name):
     yield StageEvent(stage="synthesize", status="running", detail="grok-4.6")
     await asyncio.sleep(0.6)
     yield StageEvent(stage="synthesize", status="done")
-    yield ResultEvent(dossier=_dossier())
+    yield DossierEvent(dossier=_dossier())
+
+
+async def fake_select(dossier):
+    """What Grok picks for Cursor, canned. Note the absence of a bare "cursor"
+    query — the dossier says the name is 75% owned by something else."""
+    await asyncio.sleep(0.5)
+    return ScrapeTargets(
+        reddit=RedditTargets(
+            subreddits=["cursor", "ChatGPTCoding"],
+            search_queries=["cursor composer broken", "cursorrules not working"],
+        ),
+        hackernews=HackerNewsTargets(search_queries=["Cursor editor Anysphere"]),
+    )
 
 
 pipeline.preprocess_stream = fake_stream
+# Only selection is canned. harvest_stream runs for real, so the demo shows the
+# genuine fallback: it tries the scraper, and substitutes recorded signals when
+# there is none — announcing it, exactly as a live run would.
+pipeline.select_targets = fake_select
 
 import main  # noqa: E402  - imported after the patch lands
 
