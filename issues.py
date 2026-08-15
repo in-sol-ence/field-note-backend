@@ -109,23 +109,27 @@ class ValidationResult:
     explanation: str
     sources: list[str]
 
-async def analyze_signals(signals):                                                                                  
-    findings: SignalFindings = await extract_findings(signals)                                                                       
-    merged: SignalFindings = await merge_findings(findings)                                                                          
-    await validate_issues(merged, signals)                                                                                        
+async def analyze_signals(signals: list[Signal]) -> SignalFindings:
+    findings: SignalFindings = await extract_issues(signals)
+    merged: SignalFindings = await merge_issues(findings)
+    await validate_issues(merged, signals)
     return merged
 
 async def extract_issues(signals: list[Signal]) -> SignalFindings:
     """Extract findings with one concurrent Grok call per signal."""
-    calls = [
-        call_grok(
-            extract_signals_prompt.format(
-                signal_json=json.dumps(asdict(signal), ensure_ascii=False)
-            ),
-            SignalFindings,
+    # Drop bulky raw payloads before sending to the model.
+    calls = []
+    for signal in signals:
+        payload = asdict(signal)
+        payload["raw"] = {}
+        calls.append(
+            call_grok(
+                extract_signals_prompt.format(
+                    signal_json=json.dumps(payload, ensure_ascii=False)
+                ),
+                SignalFindings,
+            )
         )
-        for signal in signals
-    ]
     extracted_findings = await asyncio.gather(*calls)
 
     findings = SignalFindings(
