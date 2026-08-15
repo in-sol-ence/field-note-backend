@@ -849,7 +849,8 @@
             "enum": [
               "running",
               "done",
-              "failed"
+              "failed",
+              "skipped"
             ],
             "title": "Status",
             "type": "string"

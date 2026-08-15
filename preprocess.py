@@ -674,6 +674,8 @@ async def preprocess_stream(
         if stage in loud_stages:
             yield StageEvent(stage=stage, status="running")  # type: ignore[arg-type]
     if not site:
+        for stage in ("map", "find_similar"):
+            yield StageEvent(stage=stage, status="skipped", detail="no website")  # type: ignore[arg-type]
         yield StageEvent(stage="search_context", status="running")
 
     targets: list[str] = []

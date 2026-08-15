@@ -262,8 +262,9 @@ class StageEvent(BaseModel):
     stage: Stage
     # "failed" means the stage finished having produced nothing. The run
     # continues — every stage is degradable — but the row should not read as a
-    # success in the UI.
-    status: Literal["running", "done", "failed"]
+    # success in the UI. "skipped" means the stage was never attempted (a
+    # repo-only run has no site to map).
+    status: Literal["running", "done", "failed", "skipped"]
     detail: str | None = None
 
 

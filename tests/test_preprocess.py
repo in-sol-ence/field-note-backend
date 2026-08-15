@@ -125,8 +125,9 @@ def test_repo_alone_produces_a_dossier(wired) -> None:
 
     assert dossier.identity.canonical_name == "Acme"
     stages = {e.stage for e in events if isinstance(e, StageEvent)}
-    # nothing site-shaped is attempted without a site
-    assert "map" not in stages and "find_similar" not in stages
+    # nothing site-shaped is attempted without a site; the UI is told so
+    skipped = {e.stage for e in events if isinstance(e, StageEvent) and e.status == "skipped"}
+    assert skipped == {"map", "find_similar"}
     assert "scrape_repo" in stages and "search_collisions" in stages
     # the repo name seeds the collision hunt, and no host is excluded
     assert ("acme", None) in wired["searches"]
