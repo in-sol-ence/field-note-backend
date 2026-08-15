@@ -1,0 +1,49 @@
+"""Shared data objects for the feedback-analysis pipeline."""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Literal
+
+
+@dataclass
+class Comment:
+    author: str
+    body: str
+    score: str
+
+
+@dataclass
+class Engagement:
+    # Reddit fields
+    score: str | None = None
+    comments: list[Comment] = field(default_factory=list)
+
+    # X fields
+    likes: int | None = None
+    replies: int | None = None
+    retweets: int | None = None
+
+
+@dataclass
+class Signal:
+    platform: Literal["reddit", "x"]
+    signal_id: str
+    url: str
+    title: str
+    body: str
+    author: str
+    score: str
+    engagement: Engagement
+    scraped_at: str
+    raw: dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Signal":
+        payload = data.copy()
+        engagement_data = payload.pop("engagement").copy()
+        engagement_data["comments"] = [
+            Comment(**comment) for comment in engagement_data.get("comments", [])
+        ]
+        return cls(**payload, engagement=Engagement(**engagement_data))
+
+
