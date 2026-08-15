@@ -94,7 +94,12 @@ def dossier_to_search_queries(dossier: ProductDossier) -> list[str]:
 
 def load_fixture_signals(path: str | Path) -> list[Signal]:
     """Load a fixture file as validated assets.Signal objects."""
-    raw = json.loads(Path(path).expanduser().read_text())
+    candidate = Path(path).expanduser()
+    if not candidate.is_file():
+        alt = _BACKEND_ROOT / path
+        if alt.is_file():
+            candidate = alt
+    raw = json.loads(candidate.read_text())
     if isinstance(raw, dict) and "tweets" in raw:
         return tweets_to_signals(list(raw["tweets"] or []))
     if isinstance(raw, dict) and "signals" in raw:
@@ -120,6 +125,21 @@ def run_x_scraper_search(
         )
 
     python = _python_bin(root)
+    # Fail fast with a setup hint when the submodule venv is missing deps.
+    probe = subprocess.run(
+        [str(python), "-c", "import rich, playwright"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        raise RuntimeError(
+            "x-scraper dependencies are not installed in "
+            f"{root}. From field-note-backend run:\n"
+            "  cd x-scraper && python3 -m venv .venv && . .venv/bin/activate\n"
+            "  pip install -e . && playwright install chromium"
+        )
     with tempfile.TemporaryDirectory(prefix="fn-xscrape-") as tmp:
         out = Path(tmp) / "result.json"
         cmd = [
