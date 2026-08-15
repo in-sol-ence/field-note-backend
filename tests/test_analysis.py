@@ -291,3 +291,67 @@ def test_a_quote_missing_from_its_source_is_flagged():
     )
     report = build_report(findings, [sig], product="Acme")
     assert report.issues[0].evidence[0].verbatim is False
+
+
+# ---------------------------------------------------------------------------
+# health_score
+# ---------------------------------------------------------------------------
+
+
+def _issue(severity: str, mentions: int = 1):
+    from enriched import RichIssue
+
+    return RichIssue(
+        id=f"i{severity}{mentions}",
+        category="issue",
+        title="t",
+        summary="s",
+        product_area="a",
+        suggested_action="",
+        signal_ids=[],
+        evidence=[],
+        mention_count=mentions,
+        reach=0,
+        first_seen=None,
+        last_seen=None,
+        channels=[],
+        severity=severity,
+    )
+
+
+def test_no_issues_is_a_clean_bill():
+    from enriched import health_score
+
+    assert health_score([], 10) == 10.0
+
+
+def test_a_deeper_scrape_is_not_punished():
+    """Reading more posts finds more issues. Scoring on raw counts would make
+    a thorough sweep look like a worse product, and would drive anyone to scrape
+    less. The same issue rate must score the same at any scrape size."""
+    from enriched import health_score
+
+    small = health_score([_issue("high")] * 2, 10)
+    large = health_score([_issue("high")] * 6, 30)
+    assert small == large
+
+
+def test_severity_moves_the_score():
+    from enriched import health_score
+
+    assert health_score([_issue("low")] * 3, 20) > health_score([_issue("critical")] * 3, 20)
+
+
+def test_one_loud_thread_cannot_dominate():
+    """mention_count is capped, so a single viral complaint cannot outweigh
+    everything else."""
+    from enriched import health_score
+
+    assert health_score([_issue("high", 50)], 20) == health_score([_issue("high", 5)], 20)
+
+
+def test_score_stays_in_range():
+    from enriched import health_score
+
+    assert health_score([_issue("critical", 5)] * 40, 1) == 0.0
+    assert 0.0 <= health_score([_issue("low")], 100) <= 10.0

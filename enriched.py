@@ -225,19 +225,26 @@ def enrich(
     )
 
 
-def health_score(issues: list[RichIssue]) -> float:
+def health_score(issues: list[RichIssue], signals_analyzed: int = 0) -> float:
     """0 (critical) to 10 (healthy).
 
-    Weighted by severity and by how many distinct people hit each issue, so one
-    loud thread cannot tank the score on its own.
+    Measured as severity-weighted issues *per signal read*, not as a raw count.
+    A raw count punishes a deeper scrape: reading 27 posts instead of 12 finds
+    more issues and would score worse for the same product, and any thorough
+    run saturates at 0.0 — which reads as a broken gauge rather than a verdict.
+
+    mention_count is capped so one loud thread cannot dominate, and the divisor
+    is the number of signals actually read, so the score compares products
+    rather than scrape sizes.
     """
     if not issues:
         return 10.0
-    penalty = sum(
+    weighted = sum(
         _SEVERITY_WEIGHT.get(i.severity or "low", 1) * min(i.mention_count, 5)
         for i in issues
     )
-    return round(max(0.0, 10.0 - penalty / 4), 1)
+    density = weighted / max(signals_analyzed or len(issues), 1)
+    return round(max(0.0, min(10.0, 10.0 - 3.0 * density)), 1)
 
 
 def build_report(
@@ -264,7 +271,7 @@ def build_report(
     return Report(
         product=product,
         generated_at=generated_at or datetime.now().astimezone().isoformat(),
-        health_score=health_score(issues),
+        health_score=health_score(issues, len(signals)),
         issues=issues,
         recommended_features=convert(findings.recommended_features, "recommended_feature"),
         loved_features=convert(findings.loved_features, "loved_feature"),
