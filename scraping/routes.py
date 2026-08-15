@@ -1,8 +1,7 @@
 """HTTP routes for live / fixture social scrapes.
 
-``POST /scrape/x`` returns ``assets.Signal`` JSON (``Signal.from_dict``) and the
-frozen Post objects from ``scraping.mapper.signal_to_post`` — the shape T2
-consumes.
+``POST /scrape/x`` and ``POST /scrape/social`` return ``assets.Signal`` JSON
+and the frozen Post objects from ``scraping.mapper.signal_to_post``.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from harvest import load_fixtures
 from scraping.mapper import signals_to_posts
 from scraping.x_providers import scrape_x, website_to_product_hint
 
@@ -20,7 +20,7 @@ router = APIRouter(tags=["scrape"])
 
 
 class XScrapeRequest(BaseModel):
-    """Scrape X into assets.Signal + Post objects.
+    """Scrape X into assets.Signal objects.
 
     ``provider`` selects the backend:
     - ``x-scraper`` — local Playwright checkout (default)
@@ -46,7 +46,22 @@ class XScrapeRequest(BaseModel):
     social_signals_url: str | None = None
 
 
-class XScrapeResponse(BaseModel):
+class SocialScrapeRequest(BaseModel):
+    """Scrape Reddit / Hacker News into assets.Signal + Post objects.
+
+    Uses recorded fixtures under ``scraping/data/`` so the console demo works
+    without a live social-signals browser session. Product text filters hits
+    when possible; otherwise the first ``per_target_limit`` rows are returned.
+    """
+
+    platforms: list[Literal["hackernews", "reddit"]] = Field(
+        default_factory=lambda: ["hackernews"]
+    )
+    product: str = Field(..., min_length=1)
+    per_target_limit: int = Field(default=15, ge=1, le=100)
+
+
+class ScrapeResponse(BaseModel):
     provider: str
     count: int
     queries: list[str]
@@ -55,8 +70,22 @@ class XScrapeResponse(BaseModel):
     mapping_errors: list[str] = Field(default_factory=list)
 
 
-@router.post("/scrape/x", response_model=XScrapeResponse)
-def scrape_x_endpoint(req: XScrapeRequest) -> XScrapeResponse:
+def _filter_product(signals: list[dict[str, Any]], product: str) -> list[dict[str, Any]]:
+    key = product.strip().casefold()
+    if not key:
+        return signals
+    matched = [
+        s
+        for s in signals
+        if key in (s.get("title") or "").casefold()
+        or key in (s.get("body") or "").casefold()
+        or key in str((s.get("raw") or {}).get("search_query") or "").casefold()
+    ]
+    return matched or signals
+
+
+@router.post("/scrape/x", response_model=ScrapeResponse)
+def scrape_x_endpoint(req: XScrapeRequest) -> ScrapeResponse:
     product = req.product
     if not product and req.website:
         product = website_to_product_hint(req.website)
@@ -88,11 +117,44 @@ def scrape_x_endpoint(req: XScrapeRequest) -> XScrapeResponse:
     signal_dicts = [asdict(s) for s in signals]
     posts, mapping_errors = signals_to_posts(signal_dicts)
 
-    return XScrapeResponse(
+    return ScrapeResponse(
         provider=req.provider,
         count=len(signals),
         queries=used_queries,
         signals=signal_dicts,
+        posts=posts,
+        mapping_errors=mapping_errors,
+    )
+
+
+@router.post("/scrape/social", response_model=ScrapeResponse)
+def scrape_social_endpoint(req: SocialScrapeRequest) -> ScrapeResponse:
+    if not req.platforms:
+        raise HTTPException(status_code=422, detail="platforms must be non-empty")
+
+    signals: list[dict[str, Any]] = []
+    for platform in req.platforms:
+        batch = load_fixtures(platform)
+        if not batch:
+            continue
+        batch = _filter_product(batch, req.product)[: req.per_target_limit]
+        signals.extend(batch)
+
+    if not signals:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no fixture signals for {req.platforms} "
+                f"(product={req.product!r}). Check scraping/data/."
+            ),
+        )
+
+    posts, mapping_errors = signals_to_posts(signals)
+    return ScrapeResponse(
+        provider="fixture",
+        count=len(signals),
+        queries=[req.product],
+        signals=signals,
         posts=posts,
         mapping_errors=mapping_errors,
     )
