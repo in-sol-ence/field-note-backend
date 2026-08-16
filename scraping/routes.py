@@ -13,7 +13,12 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from harvest import load_fixtures
+from harvest import (
+    ScrapeUnavailable,
+    load_fixtures,
+    product_targets,
+    scrape_social_platforms,
+)
 from scraping.mapper import signals_to_posts
 from scraping.x_providers import scrape_x, website_to_product_hint
 
@@ -50,9 +55,10 @@ class XScrapeRequest(BaseModel):
 class SocialScrapeRequest(BaseModel):
     """Scrape Reddit / Hacker News into assets.Signal + Post objects.
 
-    Uses recorded fixtures under ``scraping/data/`` so the console demo works
-    without a live social-signals browser session. Product text filters hits
-    when possible; otherwise the first ``per_target_limit`` rows are returned.
+    ``provider``:
+    - ``auto`` — live social-signals, then recorded fixtures if live fails
+    - ``social-signals`` — live only (502 when :8899 is down)
+    - ``fixture`` — recorded Perplexity signals under ``scraping/data/``
     """
 
     platforms: list[Literal["hackernews", "reddit"]] = Field(
@@ -60,6 +66,12 @@ class SocialScrapeRequest(BaseModel):
     )
     product: str = Field(..., min_length=1)
     per_target_limit: int = Field(default=15, ge=1, le=100)
+    provider: Literal["auto", "social-signals", "fixture"] = "auto"
+    allow_fixtures: bool = True
+    subreddits: list[str] = Field(default_factory=list)
+    search_queries: list[str] = Field(default_factory=list)
+    # Console defaults off for speed; harvest /preprocess still uses detail pass.
+    fetch_bodies: bool = False
 
 
 class ScrapeResponse(BaseModel):
@@ -83,6 +95,19 @@ def _filter_product(signals: list[dict[str, Any]], product: str) -> list[dict[st
         or key in str((s.get("raw") or {}).get("search_query") or "").casefold()
     ]
     return matched or signals
+
+
+def _fixture_batch(
+    platforms: list[str], product: str, per_target_limit: int
+) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for platform in platforms:
+        batch = load_fixtures(platform)
+        if not batch:
+            continue
+        batch = _filter_product(batch, product)[:per_target_limit]
+        signals.extend(batch)
+    return signals
 
 
 @router.post("/scrape/x", response_model=ScrapeResponse)
@@ -132,32 +157,64 @@ async def scrape_x_endpoint(req: XScrapeRequest) -> ScrapeResponse:
 
 
 @router.post("/scrape/social", response_model=ScrapeResponse)
-def scrape_social_endpoint(req: SocialScrapeRequest) -> ScrapeResponse:
+async def scrape_social_endpoint(req: SocialScrapeRequest) -> ScrapeResponse:
     if not req.platforms:
         raise HTTPException(status_code=422, detail="platforms must be non-empty")
 
+    targets = product_targets(
+        req.product,
+        subreddits=req.subreddits or None,
+        search_queries=req.search_queries or None,
+    )
+    queries = [
+        *targets.reddit.search_queries,
+        *targets.hackernews.search_queries,
+    ]
+
     signals: list[dict[str, Any]] = []
-    for platform in req.platforms:
-        batch = load_fixtures(platform)
-        if not batch:
-            continue
-        batch = _filter_product(batch, req.product)[: req.per_target_limit]
-        signals.extend(batch)
+    provider = req.provider
+    notes: list[str] = []
+
+    if req.provider == "fixture":
+        signals = _fixture_batch(req.platforms, req.product, req.per_target_limit)
+        provider = "fixture"
+    else:
+        try:
+            signals, notes = await scrape_social_platforms(
+                list(req.platforms),
+                targets,
+                per_target_limit=req.per_target_limit,
+                fetch_bodies=req.fetch_bodies,
+            )
+            provider = "social-signals"
+        except ScrapeUnavailable as exc:
+            if req.provider == "social-signals" or not req.allow_fixtures:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"live social scrape failed: {exc}",
+                ) from exc
+            signals = _fixture_batch(req.platforms, req.product, req.per_target_limit)
+            provider = "fixture"
+            notes.append(f"fell back to fixtures after live failure: {exc}")
 
     if not signals:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"no fixture signals for {req.platforms} "
-                f"(product={req.product!r}). Check scraping/data/."
+                f"no signals for {req.platforms} (product={req.product!r}, "
+                f"provider={req.provider}). Start social-signals-lite on :8899 "
+                "or check scraping/data/ fixtures."
             ),
         )
 
     posts, mapping_errors = signals_to_posts(signals)
+    if notes:
+        mapping_errors = [*notes, *mapping_errors]
+
     return ScrapeResponse(
-        provider="fixture",
+        provider=provider,
         count=len(signals),
-        queries=[req.product],
+        queries=queries or [req.product],
         signals=signals,
         posts=posts,
         mapping_errors=mapping_errors,

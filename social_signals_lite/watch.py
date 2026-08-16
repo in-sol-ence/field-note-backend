@@ -208,7 +208,10 @@ def watch_reddit(targets: dict[str, Any], per_target_limit: int) -> list[dict[st
                         time_filter=search_time,
                     )
                 )
-                posts = _enrich_posts(page, posts, len(posts), comment_limit)
+                # Search hits are title+permalink only. Detail pass is expensive;
+                # skip it when the caller asked for listings (fetch_bodies=false).
+                if fetch_bodies and posts:
+                    posts = _enrich_posts(page, posts, min(len(posts), bodies_limit), comment_limit)
                 signals.extend(_map_reddit_posts(posts, label))
             except Exception as exc:  # noqa: BLE001
                 print(

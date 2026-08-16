@@ -69,12 +69,12 @@ One-page sequence (console + backend + scraper).
 | --- | --- | --- |
 | **X** | On by default | Live Playwright via x-scraper **or** fixtures |
 | **Force live** | Checkbox | Skips openclaw/perplexity fixtures → always x-scraper |
-| **Hacker News** | Opt-in | **Fixtures only** in `/scrape/social` |
-| **Reddit** | Opt-in (slow) | **Fixtures only** in `/scrape/social` |
+| **Hacker News** | Opt-in | Live via social-signals-lite (`/scrape/social`, fixture fallback) |
+| **Reddit** | Opt-in (slow) | Live via social-signals-lite (`/scrape/social`, fixture fallback) |
 
-Pipeline `harvest.py` can drive **live** Reddit/HN via private **social-signals** (`/v1/jobs/watch`) with fixture fallback — that path is **not** what Connect calls today.
+Pipeline `harvest.py` and console `POST /scrape/social` drive **live** Reddit/HN via **social-signals** / `social_signals_lite` (`/v1/jobs/watch`) with fixture fallback.
 
-**Takeaway:** Only X force-live (or non-fixture products on X) is “real” scrape in the UI. HN/Reddit UI = recorded demo data.
+**Takeaway:** Console Connect can run live X (force-live / non-fixture products) and live HN/Reddit when `:8899` is up. Demo products (openclaw/perplexity) still prefer fixtures unless force-live is on.
 
 **Eric CLI (`fieldnote`):** T1 can use **one or both** backends via flags:
 - `--scrape-x` (default true) → live X via local `x-scraper`
@@ -109,10 +109,10 @@ Same shape as fixture Signals. Remaining risk is **ops** (cookies, timeouts, pro
 
 **Still missing for Connect:**
 
-1. Swap `/scrape/social` from `load_fixtures` → live watch (or job + poll/SSE)  
-2. UI for 3–5 min Reddit (progress), not one blocking POST  
+1. ~~Swap `/scrape/social` from `load_fixtures` → live watch~~ done (`provider=auto|social-signals|fixture`)  
+2. UI progress for multi-minute Reddit (still one blocking POST; sweep screen covers wait)
 
-So: **pipeline live; console still fixture path for HN/Reddit.**
+So: **pipeline + console both live** when `:8899` is up (fixtures remain for demos / fallback).
 
 ---
 
@@ -192,7 +192,7 @@ Checked: **no real API secrets in public git trees** (`.env` ignored; `.env.exam
 ## 11. Open follow-ups (if we continue)
 
 - [x] Live Reddit/HN without private social-signals: `social_signals_lite/` on `:8899` (`./scripts/run_social_signals_lite.sh`); `run.sh` auto-starts it  
-- [ ] Point Connect HN/Reddit at harvest / social-signals (or document fixtures-only clearly in UI)  
+- [x] Point Connect HN/Reddit at harvest / social-signals (`POST /scrape/social` live with fixture fallback)  
 - [ ] Feed console themes from T2/T3 reports, not only one-row-per-signal  
 - [ ] Job queue for live scrapes (status + SSE)  
 - [ ] T4: `related_code` from connected repo  

@@ -35,7 +35,16 @@ from schema import (
 )
 from scraping.mapper import signals_to_posts
 
-__all__ = ["FIXTURES", "harvest_stream", "load_fixtures", "to_posts"]
+__all__ = [
+    "FIXTURES",
+    "ScrapeUnavailable",
+    "harvest_stream",
+    "load_fixtures",
+    "product_targets",
+    "scrape_social_platforms",
+    "to_posts",
+    "watch_payload",
+]
 
 DATA = Path(__file__).parent / "scraping" / "data"
 
@@ -75,7 +84,37 @@ def load_fixtures(platform: str) -> list[dict[str, Any]]:
     return json.loads(path.read_text())
 
 
-def watch_payload(platform: str, targets: ScrapeTargets, per_target_limit: int) -> dict:
+def product_targets(
+    product: str,
+    *,
+    subreddits: list[str] | None = None,
+    search_queries: list[str] | None = None,
+) -> ScrapeTargets:
+    """Console / HTTP scrape targets from a bare product name (no LLM dossier)."""
+    from schema import HackerNewsTargets, RedditTargets, XTargets
+
+    name = product.strip()
+    slug = "".join(ch for ch in name.lower() if ch.isalnum())
+    # Keep the console budget small: one complaint query + optional product sub.
+    queries = list(search_queries) if search_queries is not None else (
+        [f"{name} bug OR broken OR issue"] if name else []
+    )
+    subs = list(subreddits) if subreddits is not None else ([slug] if slug else [])
+    return ScrapeTargets(
+        reddit=RedditTargets(subreddits=subs, search_queries=queries),
+        hackernews=HackerNewsTargets(search_queries=[name] if name else []),
+        x=XTargets(search_queries=[]),
+        rationale=f"console scrape for {name!r}",
+    )
+
+
+def watch_payload(
+    platform: str,
+    targets: ScrapeTargets,
+    per_target_limit: int,
+    *,
+    fetch_bodies: bool = True,
+) -> dict:
     """Build the /v1/jobs/watch body. Pure, so the mapping is testable."""
     if platform == "reddit":
         inner: dict[str, Any] = {
@@ -83,12 +122,17 @@ def watch_payload(platform: str, targets: ScrapeTargets, per_target_limit: int) 
             "search_queries": targets.reddit.search_queries,
             "sort": "top",
             "time_filter": "month",
-            "fetch_bodies": True,
-            "fetch_bodies_limit": 10,
-            "comment_limit": 25,
+            "fetch_bodies": fetch_bodies,
+            "fetch_bodies_limit": 10 if fetch_bodies else 0,
+            "comment_limit": 25 if fetch_bodies else 0,
         }
     else:
-        inner = {"search_queries": targets.hackernews.search_queries}
+        inner = {
+            "search_queries": targets.hackernews.search_queries,
+            "fetch_comments": fetch_bodies,
+            "fetch_comments_limit": 6 if fetch_bodies else 0,
+            "comment_limit": 15 if fetch_bodies else 0,
+        }
 
     return {
         "platform": platform,
@@ -147,7 +191,11 @@ async def _run_x_scraper(
 
 
 async def _run_watch(
-    platform: str, targets: ScrapeTargets, per_target_limit: int
+    platform: str,
+    targets: ScrapeTargets,
+    per_target_limit: int,
+    *,
+    fetch_bodies: bool = True,
 ) -> AsyncIterator[Any]:
     """Submit a watch job and poll it. Yields floats (seconds waited) as
     progress, then finally the list of signals."""
@@ -158,7 +206,9 @@ async def _run_watch(
     s = get_settings()
     base = s.social_signals_url.rstrip("/")
     headers = {"Authorization": f"Bearer {s.social_signals_api_key}"}
-    payload = watch_payload(platform, targets, per_target_limit)
+    payload = watch_payload(
+        platform, targets, per_target_limit, fetch_bodies=fetch_bodies
+    )
 
     async with httpx.AsyncClient(timeout=30.0) as http:
         try:
@@ -199,6 +249,54 @@ async def _run_watch(
 # --------------------------------------------------------------------------
 # Orchestration
 # --------------------------------------------------------------------------
+
+
+async def scrape_social_platforms(
+    platforms: list[str],
+    targets: ScrapeTargets,
+    *,
+    per_target_limit: int = 15,
+    fetch_bodies: bool = True,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Live Reddit/HN via social-signals. Returns (signals, per-platform notes).
+
+    Platforms run concurrently so a slow Reddit job does not block HN.
+    Raises ``ScrapeUnavailable`` when every requested platform fails or the
+    service is unreachable.
+    """
+
+    async def one(platform: str) -> tuple[str, list[dict[str, Any]] | None, str]:
+        if platform not in {"reddit", "hackernews"}:
+            return platform, None, f"{platform}: unsupported"
+        if not has_targets(platform, targets):
+            return platform, None, f"{platform}: no targets"
+        try:
+            got: list[dict[str, Any]] | None = None
+            async for item in _run_watch(
+                platform, targets, per_target_limit, fetch_bodies=fetch_bodies
+            ):
+                if isinstance(item, list):
+                    got = item
+            if got:
+                return platform, got, f"{platform}: live {len(got)}"
+            return platform, None, f"{platform}: empty"
+        except ScrapeUnavailable as exc:
+            return platform, None, f"{platform}: {exc}"
+
+    results = await asyncio.gather(*(one(p) for p in platforms))
+    signals: list[dict[str, Any]] = []
+    notes: list[str] = []
+    any_ok = False
+    for _platform, got, note in results:
+        notes.append(note)
+        if got:
+            signals.extend(got)
+            any_ok = True
+
+    if not any_ok:
+        detail = "; ".join(notes) or "social scrape produced no signals"
+        raise ScrapeUnavailable(detail)
+    return signals, notes
 
 
 async def _collect(

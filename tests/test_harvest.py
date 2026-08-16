@@ -121,15 +121,16 @@ def test_a_live_scrape_is_reported_as_live(monkeypatch) -> None:
     assert got.source_note == "live scrape"
 
 
-def test_one_platform_falling_back_makes_the_whole_harvest_not_live(monkeypatch) -> None:
-    """`live` is deliberately conservative. Reddit succeeding while HackerNews
-    is substituted still means some posts are about another product, and
-    claiming the harvest is live would misrepresent that."""
+def test_mixed_live_and_fixture_is_reported_as_mixed(monkeypatch) -> None:
+    """Reddit live + HN fixture fallback stays ``live`` but the source note
+    must say mixed so operators do not treat Perplexity fixtures as product
+    feedback."""
     monkeypatch.setattr(
         harvest, "_run_watch", _fake_watch({"reddit": load_fixtures("reddit")[:3]})
     )
     got = _harvest(_drain())  # TARGETS covers both platforms
-    assert got.live is False
+    assert got.live is True
+    assert "mixed" in got.source_note
     assert len(got.posts) > 3  # reddit's live posts plus HN's recorded ones
 
 
