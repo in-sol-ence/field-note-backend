@@ -20,7 +20,7 @@ import re
 
 from pydantic import ValidationError
 
-from schema import HackerNewsTargets, ProductDossier, RedditTargets, ScrapeTargets
+from schema import HackerNewsTargets, ProductDossier, RedditTargets, ScrapeTargets, XTargets
 
 __all__ = ["clamp", "fallback_targets", "select_targets"]
 
@@ -30,6 +30,7 @@ __all__ = ["clamp", "fallback_targets", "select_targets"]
 MAX_SUBREDDITS = 4
 MAX_REDDIT_QUERIES = 4
 MAX_HN_QUERIES = 3
+MAX_X_QUERIES = 3
 
 _SUB_CLEAN = re.compile(r"^(?:https?://)?(?:www\.)?(?:reddit\.com)?/?r/", re.IGNORECASE)
 
@@ -67,6 +68,9 @@ def clamp(targets: ScrapeTargets) -> ScrapeTargets:
         hackernews=HackerNewsTargets(
             search_queries=_dedupe(targets.hackernews.search_queries, MAX_HN_QUERIES),
         ),
+        x=XTargets(
+            search_queries=_dedupe(targets.x.search_queries, MAX_X_QUERIES),
+        ),
         rationale=targets.rationale,
     )
 
@@ -86,6 +90,13 @@ def fallback_targets(dossier: ProductDossier) -> ScrapeTargets:
     # Complaint-shaped queries find complaints; the bare name finds press.
     queries += [f"{name} bug", f"{name} not working"]
 
+    from scraping.x_providers import dossier_to_search_queries
+
+    try:
+        x_queries = dossier_to_search_queries(dossier)
+    except ValueError:
+        x_queries = [f'("{name}") (bug OR broken OR crash OR "not working")']
+
     return clamp(
         ScrapeTargets(
             reddit=RedditTargets(
@@ -93,6 +104,7 @@ def fallback_targets(dossier: ProductDossier) -> ScrapeTargets:
                 search_queries=queries,
             ),
             hackernews=HackerNewsTargets(search_queries=[name]),
+            x=XTargets(search_queries=x_queries),
             rationale="LLM source selection unavailable — derived from the "
             "dossier's own name and jargon.",
         )
@@ -112,6 +124,9 @@ users live in. Never invent a subreddit.
 subreddits nobody would think to list, and only site-wide search finds them. \
 Write queries the way an annoyed user writes a title, not the way a marketer \
 writes a headline.
+- Also fill `x.search_queries` for X/Twitter: short complaint-oriented queries \
+(bugs, crashes, "not working", billing). Prefer distinctive jargon over bare \
+ambiguous product names.
 - Use the product's distinctive jargon. If a term is listed as having no \
 namesakes, it is a better search key than the product name itself.
 - Respect the collisions. If the name is ambiguous, never emit a bare-name query \

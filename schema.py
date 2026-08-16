@@ -31,6 +31,15 @@ class PreprocessRequest(BaseModel):
         default="t1",
         description="Last stage to run. 't0' returns the dossier without scraping.",
     )
+    # T1 scrape backends — one or both. Go CLI: --scrape-x / --scrape-social.
+    scrape_x: bool = Field(
+        default=True,
+        description="Live X via local x-scraper (Playwright).",
+    )
+    scrape_social: bool = Field(
+        default=True,
+        description="Reddit + Hacker News via social-signals (:8899).",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -163,11 +172,16 @@ class HackerNewsTargets(BaseModel):
     search_queries: list[str] = Field(default_factory=list)
 
 
+class XTargets(BaseModel):
+    search_queries: list[str] = Field(default_factory=list)
+
+
 class ScrapeTargets(BaseModel):
     """T1's output: what to scrape, derived from the dossier's discriminator."""
 
     reddit: RedditTargets = Field(default_factory=RedditTargets)
     hackernews: HackerNewsTargets = Field(default_factory=HackerNewsTargets)
+    x: XTargets = Field(default_factory=XTargets)
     rationale: str | None = Field(
         default=None,
         description="Why these targets, in one or two sentences. Shown to the "
@@ -250,6 +264,7 @@ Stage = Literal[
     "select_sources",
     "scrape_reddit",
     "scrape_hackernews",
+    "scrape_x",
     "map_posts",
     # T2
     "extract_issues",

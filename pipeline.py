@@ -88,7 +88,12 @@ async def run_t0_stream(req: PreprocessRequest) -> AsyncIterator[Event]:
         yield event
 
 
-async def run_t1_stream(dossier: ProductDossier) -> AsyncIterator[Event]:
+async def run_t1_stream(
+    dossier: ProductDossier,
+    *,
+    scrape_x: bool = True,
+    scrape_social: bool = True,
+) -> AsyncIterator[Event]:
     """T1 — pick sources from the dossier, then scrape them.
 
     Source selection failing is not fatal: the dossier alone is enough to build
@@ -101,13 +106,35 @@ async def run_t1_stream(dossier: ProductDossier) -> AsyncIterator[Event]:
         yield ErrorEvent(stage="select_sources", detail=str(exc)[:300], fatal=False)
         targets = fallback_targets(dossier)
 
+    # Ensure X has queries when the operator asked for X but the model omitted them.
+    if scrape_x and not targets.x.search_queries:
+        from scraping.x_providers import dossier_to_search_queries
+        from schema import XTargets
+
+        try:
+            targets = targets.model_copy(
+                update={"x": XTargets(search_queries=dossier_to_search_queries(dossier))}
+            )
+        except ValueError:
+            pass
+
     detail = (
         f"{len(targets.reddit.subreddits)} subreddits, "
-        f"{len(targets.reddit.search_queries) + len(targets.hackernews.search_queries)} queries"
+        f"{len(targets.reddit.search_queries) + len(targets.hackernews.search_queries)} social queries, "
+        f"{len(targets.x.search_queries)} x queries"
+        f" · backends: "
+        + ", ".join(
+            p
+            for p, on in (("x", scrape_x), ("social", scrape_social))
+            if on
+        )
+        or "none"
     )
     yield StageEvent(stage="select_sources", status="done", detail=detail)
 
-    async for event in harvest_stream(targets):
+    async for event in harvest_stream(
+        targets, scrape_x=scrape_x, scrape_social=scrape_social
+    ):
         yield event
 
 
@@ -131,7 +158,9 @@ async def run_stream(req: PreprocessRequest) -> AsyncIterator[Event]:
         return
 
     if req.stop_after != "t0":
-        async for event in run_t1_stream(dossier):
+        async for event in run_t1_stream(
+            dossier, scrape_x=req.scrape_x, scrape_social=req.scrape_social
+        ):
             if isinstance(event, HarvestEvent):
                 harvest = event.harvest
             yield event

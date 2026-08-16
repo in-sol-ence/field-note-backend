@@ -103,7 +103,11 @@ def watch_payload(platform: str, targets: ScrapeTargets, per_target_limit: int) 
 def has_targets(platform: str, targets: ScrapeTargets) -> bool:
     if platform == "reddit":
         return bool(targets.reddit.subreddits or targets.reddit.search_queries)
-    return bool(targets.hackernews.search_queries)
+    if platform == "hackernews":
+        return bool(targets.hackernews.search_queries)
+    if platform == "x":
+        return bool(targets.x.search_queries)
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -113,6 +117,33 @@ def has_targets(platform: str, targets: ScrapeTargets) -> bool:
 
 class ScrapeUnavailable(RuntimeError):
     """The live scraper could not produce signals. Callers fall back."""
+
+
+async def _run_x_scraper(
+    targets: ScrapeTargets, per_target_limit: int
+) -> list[dict[str, Any]]:
+    """Live X via the local x-scraper checkout (subprocess Playwright)."""
+    from dataclasses import asdict
+
+    from scraping.x_providers import scrape_x
+
+    queries = list(targets.x.search_queries)
+    if not queries:
+        raise ScrapeUnavailable("no X search queries in targets")
+
+    try:
+        signals = await asyncio.to_thread(
+            scrape_x,
+            provider="x-scraper",
+            search_queries=queries,
+            count=max(per_target_limit, 1),
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise ScrapeUnavailable(f"x-scraper failed: {exc}") from exc
+
+    if not signals:
+        raise ScrapeUnavailable("x-scraper returned no signals")
+    return [asdict(s) for s in signals]
 
 
 async def _run_watch(
@@ -151,7 +182,7 @@ async def _run_watch(
             except Exception as exc:  # noqa: BLE001
                 raise ScrapeUnavailable(f"lost the scraper mid-job: {exc}") from exc
 
-            if res.get("status") == "running":
+            if res.get("status") in ("running", "queued"):
                 yield waited
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
@@ -174,6 +205,12 @@ async def _collect(
     platform: str, targets: ScrapeTargets, per_target_limit: int, started: float
 ) -> AsyncIterator[Any]:
     """One platform: live scrape, heartbeating while it waits."""
+    if platform == "x":
+        # x-scraper is a blocking subprocess — no poll loop, one heartbeat at start.
+        yield HeartbeatEvent(elapsed_ms=int((time.monotonic() - started) * 1000))
+        yield await _run_x_scraper(targets, per_target_limit)
+        return
+
     last_beat = 0.0
     async for item in _run_watch(platform, targets, per_target_limit):
         if isinstance(item, list):
@@ -247,16 +284,37 @@ async def harvest_stream(
     *,
     per_target_limit: int = 15,
     allow_fixtures: bool = True,
+    scrape_x: bool = True,
+    scrape_social: bool = True,
 ) -> AsyncIterator[Event]:
-    """Scrape every platform with targets, concurrently, then emit one
-    HarvestEvent. Reddit alone takes 3-5 minutes; HackerNews answers in
-    seconds — running them in sequence would bill the run for both."""
+    """Scrape enabled platforms concurrently, then emit one HarvestEvent.
+
+    ``scrape_x`` uses the local x-scraper (Playwright). ``scrape_social`` uses
+    social-signals for Reddit/HN (fixtures when that service is down).
+    """
     started = time.monotonic()
     signals: list[dict[str, Any]] = []
     degraded: list[str] = []
-    live = True
+    any_live = False
+    notes: list[str] = []
 
-    platforms = [p for p in ("reddit", "hackernews") if has_targets(p, targets)]
+    platforms: list[str] = []
+    if scrape_social:
+        platforms.extend(p for p in ("reddit", "hackernews") if has_targets(p, targets))
+    if scrape_x and has_targets("x", targets):
+        platforms.append("x")
+
+    if not platforms:
+        yield HarvestEvent(
+            harvest=Harvest(
+                targets=targets,
+                posts=[],
+                live=False,
+                source_note="no scrape platforms enabled or no targets selected",
+                mapping_errors=[],
+            )
+        )
+        return
 
     # The platform streams run as tasks feeding one queue, so their progress
     # events interleave on the wire in the order they actually happen.
@@ -265,7 +323,7 @@ async def harvest_stream(
     async def pump(platform: str) -> tuple[list[dict[str, Any]], list[str], bool]:
         try:
             async for item in _platform_stream(
-                platform, targets, per_target_limit, allow_fixtures, started
+                platform, targets, per_target_limit, allow_fixtures and platform != "x", started
             ):
                 if isinstance(item, tuple):
                     return item
@@ -284,20 +342,24 @@ async def harvest_stream(
             yield item
 
     for task in tasks:  # re-raise anything unexpected, in platform order
-        got, notes, was_live = await task
+        got, platform_notes, was_live = await task
         signals += got
-        degraded += notes
-        live = live and was_live
+        degraded += platform_notes
+        if was_live and got:
+            any_live = True
+            notes.append(f"live {len(got)}")
+        elif got and not was_live:
+            notes.append(f"recorded {len(got)}")
 
     yield StageEvent(stage="map_posts", status="running")
     posts, errors = to_posts(signals)
     yield StageEvent(stage="map_posts", status="done", detail=f"{len(posts)} posts")
 
-    # Settle `live` before describing it: a run that scraped nothing is not a
-    # live run, whatever happened on the way there.
-    live = live and bool(posts)
-    if live:
+    live = any_live and bool(posts)
+    if live and all("recorded" not in n for n in notes):
         note = "live scrape"
+    elif live:
+        note = "mixed live + recorded signals — see mapping_errors for degraded sources"
     elif posts:
         note = "recorded signals — the live scraper was unavailable"
     else:

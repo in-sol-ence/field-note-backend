@@ -76,6 +76,11 @@ Pipeline `harvest.py` can drive **live** Reddit/HN via private **social-signals*
 
 **Takeaway:** Only X force-live (or non-fixture products on X) is “real” scrape in the UI. HN/Reddit UI = recorded demo data.
 
+**Eric CLI (`fieldnote`):** T1 can use **one or both** backends via flags:
+- `--scrape-x` (default true) → live X via local `x-scraper`
+- `--scrape-social` (default true) → Reddit/HN via social-signals `:8899` (fixtures if down)
+- Examples: `--scrape-social=false` (X only), `--scrape-x=false` (social only)
+
 ---
 
 ## 4. One-pager — Is X fully integrated for assets?
@@ -100,13 +105,14 @@ Same shape as fixture Signals. Remaining risk is **ops** (cookies, timeouts, pro
 
 **Code:** near ready (patches under `scraping/social_signals_patch/`, mapper, harvest stream, heartbeats, loud degrade).
 
-**Missing for Connect:**
+**Live ops (2026-08-16):** `social_signals_lite/` serves the harvest watch API on `:8899` (HN Algolia + Reddit Playwright). Start with `./scripts/run_social_signals_lite.sh`; Eric’s `run.sh` auto-starts it when the port is down. Verified: harvest `live=True` / `source_note=live scrape` for Reddit+HN.
 
-1. Running social-signals service + cookies  
-2. Swap `/scrape/social` from `load_fixtures` → live watch (or job + poll/SSE)  
-3. UI for 3–5 min Reddit (progress), not one blocking POST  
+**Still missing for Connect:**
 
-So: **pipeline-near; console-not-yet.**
+1. Swap `/scrape/social` from `load_fixtures` → live watch (or job + poll/SSE)  
+2. UI for 3–5 min Reddit (progress), not one blocking POST  
+
+So: **pipeline live; console still fixture path for HN/Reddit.**
 
 ---
 
@@ -185,6 +191,7 @@ Checked: **no real API secrets in public git trees** (`.env` ignored; `.env.exam
 
 ## 11. Open follow-ups (if we continue)
 
+- [x] Live Reddit/HN without private social-signals: `social_signals_lite/` on `:8899` (`./scripts/run_social_signals_lite.sh`); `run.sh` auto-starts it  
 - [ ] Point Connect HN/Reddit at harvest / social-signals (or document fixtures-only clearly in UI)  
 - [ ] Feed console themes from T2/T3 reports, not only one-row-per-signal  
 - [ ] Job queue for live scrapes (status + SSE)  
@@ -193,4 +200,4 @@ Checked: **no real API secrets in public git trees** (`.env` ignored; `.env.exam
 
 ---
 
-*End of notes — Gregory / gwild — 2026-08-15*
+*End of notes — Gregory / gwild — 2026-08-15 (lite scraper 2026-08-16)*

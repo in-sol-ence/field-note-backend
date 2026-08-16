@@ -220,3 +220,7 @@ __marimo__/
 APPEND_SYSTEM.MD
 # Pipeline output: scrapes, findings, reports. Regenerated per run.
 out/
+
+# uploaded reddit cookies for social-signals-lite
+social_signals_lite/data/
+
