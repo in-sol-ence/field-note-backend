@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -210,7 +211,9 @@ async def _run_watch(
         platform, targets, per_target_limit, fetch_bodies=fetch_bodies
     )
 
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    # Connect/write stay tight; reads must tolerate a slow Reddit browser job.
+    timeout = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
+    async with httpx.AsyncClient(timeout=timeout) as http:
         try:
             resp = await http.post(f"{base}/v1/jobs/watch", headers=headers, json=payload)
             resp.raise_for_status()
@@ -223,14 +226,30 @@ async def _run_watch(
             raise ScrapeUnavailable("scraper accepted the job but returned no poll_url")
 
         started = time.monotonic()
+        consecutive_failures = 0
         while True:
             waited = time.monotonic() - started
             if waited > POLL_TIMEOUT:
                 raise ScrapeUnavailable(f"{platform} scrape exceeded {POLL_TIMEOUT:.0f}s")
             try:
-                res = (await http.get(f"{base}{poll_url}", headers=headers)).json()
+                resp = await http.get(f"{base}{poll_url}", headers=headers)
+                resp.raise_for_status()
+                if not (resp.text or "").strip():
+                    raise ScrapeUnavailable("empty poll response")
+                res = resp.json()
+                consecutive_failures = 0
+            except ScrapeUnavailable:
+                raise
             except Exception as exc:  # noqa: BLE001
-                raise ScrapeUnavailable(f"lost the scraper mid-job: {exc}") from exc
+                consecutive_failures += 1
+                if consecutive_failures >= 5:
+                    raise ScrapeUnavailable(
+                        f"lost the scraper mid-job after {consecutive_failures} "
+                        f"failed polls: {exc or type(exc).__name__}"
+                    ) from exc
+                yield waited
+                await asyncio.sleep(POLL_INTERVAL)
+                continue
 
             if res.get("status") in ("running", "queued"):
                 yield waited
@@ -309,8 +328,18 @@ async def _collect(
         yield await _run_x_scraper(targets, per_target_limit)
         return
 
+    # Listings are enough for T1 clustering; permalink detail passes are what
+    # make Reddit collide with x-scraper's Chromium and drop mid-job.
+    fetch_bodies = os.environ.get("FIELDNOTE_FETCH_BODIES", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
     last_beat = 0.0
-    async for item in _run_watch(platform, targets, per_target_limit):
+    async for item in _run_watch(
+        platform, targets, per_target_limit, fetch_bodies=fetch_bodies
+    ):
         if isinstance(item, list):
             yield item
             return
@@ -322,6 +351,12 @@ async def _collect(
                 status="running",
                 detail=f"{int(item)}s elapsed — Reddit is slow by design",
             )
+
+
+def _fixtures_relevant(targets: ScrapeTargets) -> bool:
+    """Recorded signals are Perplexity-only — never substitute them for other products."""
+    blob = json.dumps(targets.model_dump()).casefold()
+    return "perplexity" in blob
 
 
 async def _platform_stream(
@@ -357,11 +392,16 @@ async def _platform_stream(
         yield (got, degraded, True)
         return
 
-    # Nothing live. Fall back, loudly.
-    fixture = load_fixtures(platform) if allow_fixtures else []
+    # Nothing live. Fall back only when fixtures match this product family.
+    use_fixtures = allow_fixtures and platform != "x" and _fixtures_relevant(targets)
+    fixture = load_fixtures(platform) if use_fixtures else []
     if not fixture:
+        if allow_fixtures and platform != "x" and not _fixtures_relevant(targets):
+            degraded.append(
+                f"{stage}: skipped Perplexity fixtures — targets are not about Perplexity"
+            )
         yield StageEvent(stage=stage, status="failed", detail="no signals")  # type: ignore[arg-type]
-        yield ([], degraded, True)
+        yield ([], degraded, False)
         return
     note = (
         f"{stage}: substituted {len(fixture)} recorded signals from "
@@ -385,10 +425,11 @@ async def harvest_stream(
     scrape_x: bool = True,
     scrape_social: bool = True,
 ) -> AsyncIterator[Event]:
-    """Scrape enabled platforms concurrently, then emit one HarvestEvent.
+    """Scrape enabled platforms, then emit one HarvestEvent.
 
-    ``scrape_x`` uses the local x-scraper (Playwright). ``scrape_social`` uses
-    social-signals for Reddit/HN (fixtures when that service is down).
+    Order is deliberate: Hacker News (HTTP) first, then X, then Reddit.
+    X and Reddit both need Chromium — running them together caused mid-job
+    drops and x-scraper timeouts in the Cursor demo.
     """
     started = time.monotonic()
     signals: list[dict[str, Any]] = []
@@ -397,10 +438,12 @@ async def harvest_stream(
     notes: list[str] = []
 
     platforms: list[str] = []
-    if scrape_social:
-        platforms.extend(p for p in ("reddit", "hackernews") if has_targets(p, targets))
+    if scrape_social and has_targets("hackernews", targets):
+        platforms.append("hackernews")
     if scrape_x and has_targets("x", targets):
         platforms.append("x")
+    if scrape_social and has_targets("reddit", targets):
+        platforms.append("reddit")
 
     if not platforms:
         yield HarvestEvent(
@@ -414,40 +457,25 @@ async def harvest_stream(
         )
         return
 
-    # The platform streams run as tasks feeding one queue, so their progress
-    # events interleave on the wire in the order they actually happen.
-    queue: asyncio.Queue[Event | None] = asyncio.Queue()
-
-    async def pump(platform: str) -> tuple[list[dict[str, Any]], list[str], bool]:
-        try:
-            async for item in _platform_stream(
-                platform, targets, per_target_limit, allow_fixtures and platform != "x", started
-            ):
-                if isinstance(item, tuple):
-                    return item
-                await queue.put(item)
-            return [], [], True  # pragma: no cover - the stream always ends in a tuple
-        finally:
-            await queue.put(None)
-
-    tasks = [asyncio.create_task(pump(p)) for p in platforms]
-    remaining = len(tasks)
-    while remaining:
-        item = await queue.get()
-        if item is None:
-            remaining -= 1
-        else:
-            yield item
-
-    for task in tasks:  # re-raise anything unexpected, in platform order
-        got, platform_notes, was_live = await task
-        signals += got
-        degraded += platform_notes
-        if was_live and got:
-            any_live = True
-            notes.append(f"live {len(got)}")
-        elif got and not was_live:
-            notes.append(f"recorded {len(got)}")
+    for platform in platforms:
+        async for item in _platform_stream(
+            platform,
+            targets,
+            per_target_limit,
+            allow_fixtures and platform != "x",
+            started,
+        ):
+            if isinstance(item, tuple):
+                got, platform_notes, was_live = item
+                signals += got
+                degraded += platform_notes
+                if was_live and got:
+                    any_live = True
+                    notes.append(f"live {len(got)}")
+                elif got and not was_live:
+                    notes.append(f"recorded {len(got)}")
+            else:
+                yield item
 
     yield StageEvent(stage="map_posts", status="running")
     posts, errors = to_posts(signals)
@@ -469,6 +497,6 @@ async def harvest_stream(
             posts=posts,
             live=live,
             source_note=note,
-            mapping_errors=errors + degraded,
+            mapping_errors=degraded + errors,
         )
     )

@@ -24,7 +24,7 @@ import pipeline
 from schema import (
     Disambiguation, DossierEvent, HackerNewsTargets, Identity, NameCollision,
     PackageRef, ProductDossier, Provenance, RedditTargets, ScrapeTargets,
-    Source, StageEvent, Vocabulary, What,
+    Source, StageEvent, Vocabulary, What, XTargets,
 )
 
 NOW = datetime.now(timezone.utc)
@@ -122,10 +122,14 @@ async def fake_select(dossier):
     await asyncio.sleep(0.5)
     return ScrapeTargets(
         reddit=RedditTargets(
-            subreddits=["cursor", "ChatGPTCoding"],
-            search_queries=["cursor composer broken", "cursorrules not working"],
+            # One product sub + one complaint search keeps Playwright short.
+            subreddits=["cursor"],
+            search_queries=["cursor composer broken"],
         ),
-        hackernews=HackerNewsTargets(search_queries=["Cursor editor Anysphere"]),
+        hackernews=HackerNewsTargets(search_queries=["Cursor Anysphere"]),
+        x=XTargets(
+            search_queries=['("Cursor IDE" OR "cursor.com") (bug OR broken OR crash OR issue)'],
+        ),
     )
 
 

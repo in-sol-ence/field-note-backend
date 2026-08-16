@@ -100,7 +100,7 @@ def test_one_bad_signal_does_not_discard_the_batch() -> None:
 
 
 def _fake_watch(signals_by_platform, *, waits=()):
-    async def run(platform, targets, per_target_limit):
+    async def run(platform, targets, per_target_limit, **_kwargs):
         for w in waits:
             yield w
         yield signals_by_platform.get(platform, [])
@@ -149,7 +149,7 @@ def test_heartbeats_are_emitted_while_reddit_takes_its_time(monkeypatch) -> None
 # --- fallback --------------------------------------------------------------
 
 
-def _dead_scraper(platform, targets, per_target_limit):
+def _dead_scraper(platform, targets, per_target_limit, **_kwargs):
     async def run():
         raise ScrapeUnavailable("connection refused")
         yield  # pragma: no cover - makes this an async generator
@@ -199,10 +199,22 @@ def test_an_empty_live_result_also_falls_back(monkeypatch) -> None:
     assert got.posts
 
 
+def test_non_perplexity_targets_do_not_get_perplexity_fixtures(monkeypatch) -> None:
+    """Cursor (etc.) must not inherit recorded Perplexity complaints on failure."""
+    monkeypatch.setattr(harvest, "_run_watch", _dead_scraper)
+    cursor = ScrapeTargets(
+        reddit=RedditTargets(subreddits=["cursor"], search_queries=["cursor composer broken"]),
+        hackernews=HackerNewsTargets(search_queries=["Cursor Anysphere"]),
+    )
+    got = _harvest(_drain(cursor))
+    assert got.posts == []
+    assert any("skipped Perplexity fixtures" in n for n in got.mapping_errors)
+
+
 def test_platforms_without_targets_are_never_scraped(monkeypatch) -> None:
     calls = []
 
-    async def run(platform, targets, per_target_limit):
+    async def run(platform, targets, per_target_limit, **_kwargs):
         calls.append(platform)
         yield []
 
@@ -217,30 +229,32 @@ def test_the_targets_used_are_reported_back(monkeypatch) -> None:
     assert _harvest(_drain()).targets == TARGETS
 
 
-# --- concurrency -----------------------------------------------------------
+# --- ordering -----------------------------------------------------------
 
 
-def test_platforms_are_scraped_concurrently(monkeypatch) -> None:
-    """HackerNews answers in seconds; it must not queue behind Reddit's
-    minutes. Reddit here refuses to finish until HackerNews has been asked,
-    which deadlocks under sequential scraping."""
-    hn_started = asyncio.Event()
+def test_platforms_run_http_before_browsers(monkeypatch) -> None:
+    """HN (HTTP) before X/Reddit (Chromium) — dual Playwright was the demo failure."""
+    order: list[str] = []
 
-    def run(platform, targets, per_target_limit):
-        async def gen():
-            if platform == "hackernews":
-                hn_started.set()
-                yield load_fixtures("hackernews")[:1]
-            else:
-                await asyncio.wait_for(hn_started.wait(), timeout=2)
-                yield load_fixtures("reddit")[:1]
-
-        return gen()
+    async def run(platform, targets, per_target_limit, **_kwargs):
+        order.append(platform)
+        yield load_fixtures(platform)[:1] if platform in FIXTURES else []
 
     monkeypatch.setattr(harvest, "_run_watch", run)
-    got = _harvest(_drain())  # TARGETS covers both platforms
-    assert got.live is True
-    assert len(got.posts) == 2
+    # Force an X query so the ordering includes all three.
+    from schema import XTargets
+
+    targets = TARGETS.model_copy(
+        update={"x": XTargets(search_queries=["cursor bug"])}
+    )
+
+    async def fake_x(targets, per_target_limit):
+        order.append("x")
+        return load_fixtures("hackernews")[:1]
+
+    monkeypatch.setattr(harvest, "_run_x_scraper", fake_x)
+    _drain(targets)
+    assert order == ["hackernews", "x", "reddit"]
 
 
 def test_a_finished_job_is_not_taxed_with_a_poll_interval(monkeypatch) -> None:
@@ -250,6 +264,7 @@ def test_a_finished_job_is_not_taxed_with_a_poll_interval(monkeypatch) -> None:
     class _Resp:
         def __init__(self, data):
             self._data = data
+            self.text = json.dumps(data)
 
         def raise_for_status(self):
             pass
