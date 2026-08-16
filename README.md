@@ -29,6 +29,24 @@ uv run uvicorn demo_server:app --port 8000
 
 It returns the same dossier whatever you ask for, so never point a real run at it.
 
+**T1 still scrapes live** in demo mode when `social_signals_lite` (`:8899`) and
+`x-scraper` are up — only T0 is canned. See `notes-gregory.md` §11 for the
+checklist to go **fully live** (real dossier + live scrapes).
+
+## Fully live (real dossier)
+
+1. Copy `.env.example` → `.env` and set `XAI_API_KEY`, `FIRECRAWL_API_KEY`, `EXA_API_KEY`.
+2. Start scrapers: `./scripts/run_social_signals_lite.sh` and ensure `~/x-scraper` works.
+3. Run `main:app` (not demo), e.g. via the CLI **without** `--demo`:
+
+```bash
+uv run uvicorn main:app --port 8001
+# or from cursor-grok-hackathon:
+# FIELDNOTE_BACKEND_DIR=../field-note-backend FIELDNOTE_PORT=8001 ./run.sh --repo getcursor/cursor --url https://cursor.com
+```
+
+`/health` must report `"mode":"live"`.
+
 ## Test
 
 ```bash

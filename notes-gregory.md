@@ -189,10 +189,80 @@ Checked: **no real API secrets in public git trees** (`.env` ignored; `.env.exam
 
 ---
 
-## 11. Open follow-ups (if we continue)
+## 11. Fully live — next steps for the team
+
+**Where we are (2026-08-16):** T1 scrapes can be fully live (HN + Reddit + X).  
+**What’s still canned in `--demo`:** T0 dossier only (`demo_server:app`).
+
+| Layer | Demo (`./run.sh --demo`) | Fully live (no `--demo`) |
+| --- | --- | --- |
+| T0 dossier | Canned Cursor JSON — no Firecrawl / Exa / Grok | Real synthesis via those three APIs |
+| T1 Reddit/HN | Live via `social_signals_lite` on `:8899` | Same |
+| T1 X | Live via `~/x-scraper` (Playwright) | Same |
+| Console `/console` | Live social + force-live X | Same (needs backend `:8000` + `:8899`) |
+
+### Checklist — turn on a fully live CLI run
+
+1. **API keys** in `field-note-backend/.env` (never commit this file):
+
+   ```bash
+   cd ~/field-note-backend && cp .env.example .env
+   # set all three — service refuses to start a real run without them:
+   #   XAI_API_KEY=...
+   #   FIRECRAWL_API_KEY=...
+   #   EXA_API_KEY=...
+   ```
+
+2. **Scrapers up**
+
+   ```bash
+   # Reddit/HN watch API (auto-started by run.sh if missing)
+   ~/field-note-backend/scripts/run_social_signals_lite.sh
+   # expect: {"service":"social-signals-lite", ...} on :8899
+
+   # X Playwright checkout
+   # ~/x-scraper with .venv + chromium (FIELDNOTE_X_SCRAPER / X_SCRAPER_ROOT)
+   ```
+
+3. **Run without `--demo`** (uses `main:app`, not `demo_server:app`):
+
+   ```bash
+   export PATH="/usr/local/go/bin:$PATH"
+   cd ~/cursor-grok-hackathon
+   FIELDNOTE_BACKEND_DIR=~/field-note-backend FIELDNOTE_PORT=8001 \
+     ./run.sh --repo getcursor/cursor --url https://cursor.com
+   ```
+
+   - Do **not** pass `--demo`.
+   - Health must report `"mode":"live"`. A leftover demo server on the same port is rejected by `run.sh`.
+   - Optional: `--scrape-x=false` / `--scrape-social=false` to isolate a backend.
+
+4. **Sanity-check outputs** in `out/<slug>/`:
+
+   - `product.md` — real homepage/repo-derived dossier (not the canned Cursor bank note only).
+   - `posts.json` — `"source_note": "live scrape"`, targets match **this** product (no Perplexity fixture substitution unless targets mention Perplexity).
+
+### Ops notes that bite demos
+
+- **X + Reddit both use Chromium** — harvest runs **HN → X → Reddit** sequentially so they don’t collide.
+- **Perplexity fixtures** only substitute when scrape targets look like Perplexity; Cursor runs fail loud instead of lying.
+- **Reddit detail pass** off by default (`FIELDNOTE_FETCH_BODIES=1` to enable permalink bodies).
+- Private `social-signals` monorepo is optional; `social_signals_lite` is the hackathon stand-in.
+
+### Still open after fully live T0+T1
+
+- [ ] Console themes from T2/T3 reports (not one-row-per-signal)  
+- [ ] Async job UI for multi-minute Reddit  
+- [ ] T4 `related_code` from connected repo  
+- [ ] Optional: real private `social-signals` instead of lite  
+
+---
+
+## 12. Open follow-ups (if we continue)
 
 - [x] Live Reddit/HN without private social-signals: `social_signals_lite/` on `:8899` (`./scripts/run_social_signals_lite.sh`); `run.sh` auto-starts it  
 - [x] Point Connect HN/Reddit at harvest / social-signals (`POST /scrape/social` live with fixture fallback)  
+- [x] Document fully-live path (keys + no `--demo`) for the team — see §11  
 - [ ] Feed console themes from T2/T3 reports, not only one-row-per-signal  
 - [ ] Job queue for live scrapes (status + SSE)  
 - [ ] T4: `related_code` from connected repo  
@@ -200,4 +270,4 @@ Checked: **no real API secrets in public git trees** (`.env` ignored; `.env.exam
 
 ---
 
-*End of notes — Gregory / gwild — 2026-08-15 (lite scraper 2026-08-16)*
+*End of notes — Gregory / gwild — 2026-08-15 (fully-live checklist 2026-08-16)*
