@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+import os
 import time
 import random
 from datetime import datetime
@@ -52,8 +53,15 @@ class PlaywrightScraper:
         try:
             self.playwright = await async_playwright().start()
             
+            # Silent by default. Set X_SCRAPER_HEADED=1 only for manual login /
+            # cookie refresh when the window must be visible.
+            self.headless = os.environ.get("X_SCRAPER_HEADED", "").strip().lower() not in {
+                "1",
+                "true",
+                "yes",
+            }
             browser_args = {
-                'headless': False, 
+                'headless': self.headless,
                 'args': [
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
@@ -64,6 +72,9 @@ class PlaywrightScraper:
                     '--disable-renderer-backgrounding',
                 ]
             }
+            self.logger.info(
+                "Playwright chromium launch headless=%s", self.headless
+            )
             
             if self.proxy_config and self.proxy_config.get('enable_proxy_rotation'):
                 proxy_list = self.proxy_config.get('proxies', [])
@@ -427,6 +438,14 @@ class PlaywrightScraper:
     async def _manual_login_fallback(self) -> bool:
         """Let the user finish X login in the open browser, then save cookies."""
         if not self.page or not self.context:
+            return False
+
+        if getattr(self, "headless", True):
+            self.logger.error(
+                "Manual X login needs a visible browser. Re-run once with "
+                "X_SCRAPER_HEADED=1 to sign in and save cookies, then scrapes "
+                "stay headless."
+            )
             return False
 
         self.logger.warning(
