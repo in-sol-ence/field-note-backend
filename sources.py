@@ -20,7 +20,14 @@ import re
 
 from pydantic import ValidationError
 
-from schema import HackerNewsTargets, ProductDossier, RedditTargets, ScrapeTargets, XTargets
+from schema import (
+    HackerNewsTargets,
+    ProductDossier,
+    RedditTargets,
+    ScrapeTargets,
+    SubstackTargets,
+    XTargets,
+)
 
 __all__ = ["clamp", "fallback_targets", "select_targets"]
 
@@ -31,6 +38,8 @@ MAX_SUBREDDITS = 4
 MAX_REDDIT_QUERIES = 4
 MAX_HN_QUERIES = 3
 MAX_X_QUERIES = 3
+MAX_SUBSTACK_TOPICS = 4
+MAX_SUBSTACK_PUBS = 6
 
 _SUB_CLEAN = re.compile(r"^(?:https?://)?(?:www\.)?(?:reddit\.com)?/?r/", re.IGNORECASE)
 
@@ -71,6 +80,12 @@ def clamp(targets: ScrapeTargets) -> ScrapeTargets:
         x=XTargets(
             search_queries=_dedupe(targets.x.search_queries, MAX_X_QUERIES),
         ),
+        substack=SubstackTargets(
+            topics=_dedupe(targets.substack.topics or targets.substack.search_queries, MAX_SUBSTACK_TOPICS),
+            publications=_dedupe(targets.substack.publications, MAX_SUBSTACK_PUBS),
+            search_queries=[],
+        ),
+        topic=targets.topic,
         rationale=targets.rationale,
     )
 
@@ -105,6 +120,8 @@ def fallback_targets(dossier: ProductDossier) -> ScrapeTargets:
             ),
             hackernews=HackerNewsTargets(search_queries=[name]),
             x=XTargets(search_queries=x_queries),
+            substack=SubstackTargets(topics=[name] if name else []),
+            topic=name or None,
             rationale="LLM source selection unavailable — derived from the "
             "dossier's own name and jargon.",
         )
@@ -131,6 +148,9 @@ ambiguous product names.
 namesakes, it is a better search key than the product name itself.
 - Respect the collisions. If the name is ambiguous, never emit a bare-name query \
 that would return the namesake instead of the product.
+- Also fill `substack.topics` with the conversation or theme to search — topic
+is the primary Substack key, not a product name. Add `substack.publications`
+only for newsletters you are sure exist.
 - Bias every query toward dissatisfaction: bugs, regressions, billing, \
 cancellation, "switched from", "anyone else". Praise is not what we are here for.
 - Return only JSON matching the schema."""

@@ -16,10 +16,11 @@ from schema import (
     Provenance,
     RedditTargets,
     ScrapeTargets,
+    SubstackTargets,
     Vocabulary,
     What,
 )
-from sources import MAX_REDDIT_QUERIES, MAX_SUBREDDITS, build_prompt, clamp, fallback_targets
+from sources import MAX_REDDIT_QUERIES, MAX_SUBREDDITS, MAX_SUBSTACK_TOPICS, build_prompt, clamp, fallback_targets
 
 
 def _dossier(**kw) -> ProductDossier:
@@ -70,11 +71,13 @@ def test_clamp_enforces_the_scrape_budget() -> None:
                 search_queries=[f"query {i}" for i in range(10)],
             ),
             hackernews=HackerNewsTargets(search_queries=[f"hn {i}" for i in range(10)]),
+            substack=SubstackTargets(topics=[f"topic {i}" for i in range(10)]),
         )
     )
     assert len(got.reddit.subreddits) == MAX_SUBREDDITS
     assert len(got.reddit.search_queries) == MAX_REDDIT_QUERIES
     assert len(got.hackernews.search_queries) == 3
+    assert len(got.substack.topics) == MAX_SUBSTACK_TOPICS
 
 
 def test_clamp_dedupes_queries_case_insensitively() -> None:
@@ -90,6 +93,8 @@ def test_fallback_needs_no_llm_and_stays_inside_budget() -> None:
     got = fallback_targets(_dossier())
     assert got.reddit.subreddits == ["cursor"]
     assert any("composer mode" in q for q in got.reddit.search_queries)
+    assert got.substack.topics == ["Cursor"]
+    assert got.topic == "Cursor"
     assert len(got.reddit.search_queries) <= MAX_REDDIT_QUERIES
     assert got.rationale
 

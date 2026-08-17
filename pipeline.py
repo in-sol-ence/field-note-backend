@@ -121,6 +121,7 @@ async def run_t1_stream(
     detail = (
         f"{len(targets.reddit.subreddits)} subreddits, "
         f"{len(targets.reddit.search_queries) + len(targets.hackernews.search_queries)} social queries, "
+        f"{len(targets.substack.topics)} substack topics, "
         f"{len(targets.x.search_queries)} x queries"
         f" · backends: "
         + ", ".join(

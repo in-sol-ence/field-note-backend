@@ -53,7 +53,7 @@ class XScrapeRequest(BaseModel):
 
 
 class SocialScrapeRequest(BaseModel):
-    """Scrape Reddit / Hacker News into assets.Signal + Post objects.
+    """Scrape Reddit / Hacker News / Substack into assets.Signal + Post objects.
 
     ``provider``:
     - ``auto`` — live social-signals, then recorded fixtures if live fails
@@ -61,15 +61,24 @@ class SocialScrapeRequest(BaseModel):
     - ``fixture`` — recorded Perplexity signals under ``scraping/data/``
     """
 
-    platforms: list[Literal["hackernews", "reddit"]] = Field(
+    platforms: list[Literal["hackernews", "reddit", "substack"]] = Field(
         default_factory=lambda: ["hackernews"]
     )
-    product: str = Field(..., min_length=1)
+    product: str = ""
+    topic: str | None = Field(
+        default=None,
+        description="Primary scrape aim. When set, it supersedes product for "
+        "Substack (and is copied into other platform queries).",
+    )
     per_target_limit: int = Field(default=15, ge=1, le=100)
     provider: Literal["auto", "social-signals", "fixture"] = "auto"
     allow_fixtures: bool = True
     subreddits: list[str] = Field(default_factory=list)
     search_queries: list[str] = Field(default_factory=list)
+    publications: list[str] = Field(
+        default_factory=list,
+        description="Optional Substack publication URLs or subdomains.",
+    )
     # Console defaults off for speed; harvest /preprocess still uses detail pass.
     fetch_bodies: bool = False
 
@@ -160,15 +169,21 @@ async def scrape_x_endpoint(req: XScrapeRequest) -> ScrapeResponse:
 async def scrape_social_endpoint(req: SocialScrapeRequest) -> ScrapeResponse:
     if not req.platforms:
         raise HTTPException(status_code=422, detail="platforms must be non-empty")
+    aim = (req.topic or req.product or "").strip()
+    if not aim:
+        raise HTTPException(status_code=422, detail="topic or product is required")
 
     targets = product_targets(
-        req.product,
+        req.product or aim,
+        topic=req.topic or aim,
         subreddits=req.subreddits or None,
         search_queries=req.search_queries or None,
+        publications=req.publications or None,
     )
     queries = [
         *targets.reddit.search_queries,
         *targets.hackernews.search_queries,
+        *targets.substack.topics,
     ]
 
     signals: list[dict[str, Any]] = []
@@ -201,7 +216,7 @@ async def scrape_social_endpoint(req: SocialScrapeRequest) -> ScrapeResponse:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"no signals for {req.platforms} (product={req.product!r}, "
+                f"no signals for {req.platforms} (topic={aim!r}, "
                 f"provider={req.provider}). Start social-signals-lite on :8899 "
                 "or check scraping/data/ fixtures."
             ),
@@ -214,7 +229,7 @@ async def scrape_social_endpoint(req: SocialScrapeRequest) -> ScrapeResponse:
     return ScrapeResponse(
         provider=provider,
         count=len(signals),
-        queries=queries or [req.product],
+        queries=queries or [aim],
         signals=signals,
         posts=posts,
         mapping_errors=mapping_errors,

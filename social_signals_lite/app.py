@@ -68,7 +68,7 @@ def service_health() -> dict[str, Any]:
         "version": __version__,
         "auth_required": bool(_expected_key()),
         "default_config": os.environ.get("SIGNALS_CONFIG", "crispy-pancake"),
-        "platforms": ["hackernews", "reddit"],
+        "platforms": ["hackernews", "reddit", "substack"],
         "reddit_cookies": any(p.is_file() for p in cookie_paths()),
     }
 
@@ -83,9 +83,9 @@ def job_watch(body: WatchRequest) -> JobResponse:
         else:
             raise HTTPException(
                 status_code=400,
-                detail="platform is required (reddit or hackernews)",
+                detail="platform is required (reddit, hackernews, or substack)",
             )
-    if platform not in {"reddit", "hackernews"}:
+    if platform not in {"reddit", "hackernews", "substack"}:
         raise HTTPException(status_code=400, detail=f"unsupported platform: {platform}")
 
     limit = body.per_target_limit or 15

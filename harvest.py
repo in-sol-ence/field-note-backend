@@ -88,24 +88,32 @@ def load_fixtures(platform: str) -> list[dict[str, Any]]:
 def product_targets(
     product: str,
     *,
+    topic: str | None = None,
     subreddits: list[str] | None = None,
     search_queries: list[str] | None = None,
+    publications: list[str] | None = None,
 ) -> ScrapeTargets:
-    """Console / HTTP scrape targets from a bare product name (no LLM dossier)."""
-    from schema import HackerNewsTargets, RedditTargets, XTargets
+    """Console / HTTP scrape targets from a topic (preferred) or product name."""
+    from schema import HackerNewsTargets, RedditTargets, SubstackTargets, XTargets
 
-    name = product.strip()
-    slug = "".join(ch for ch in name.lower() if ch.isalnum())
-    # Keep the console budget small: one complaint query + optional product sub.
+    aim = (topic or product or "").strip()
+    slug = "".join(ch for ch in (product or aim).lower() if ch.isalnum())
     queries = list(search_queries) if search_queries is not None else (
-        [f"{name} bug OR broken OR issue"] if name else []
+        [aim] if aim else []
     )
-    subs = list(subreddits) if subreddits is not None else ([slug] if slug else [])
+    subs = list(subreddits) if subreddits is not None else (
+        [slug] if slug and not topic else []
+    )
     return ScrapeTargets(
+        topic=aim or None,
         reddit=RedditTargets(subreddits=subs, search_queries=queries),
-        hackernews=HackerNewsTargets(search_queries=[name] if name else []),
+        hackernews=HackerNewsTargets(search_queries=[aim] if aim else []),
         x=XTargets(search_queries=[]),
-        rationale=f"console scrape for {name!r}",
+        substack=SubstackTargets(
+            topics=[aim] if aim else [],
+            publications=list(publications or []),
+        ),
+        rationale=f"console scrape for {aim!r}",
     )
 
 
@@ -126,6 +134,17 @@ def watch_payload(
             "fetch_bodies": fetch_bodies,
             "fetch_bodies_limit": 10 if fetch_bodies else 0,
             "comment_limit": 25 if fetch_bodies else 0,
+        }
+    elif platform == "substack":
+        topics = list(targets.substack.topics or targets.substack.search_queries)
+        if not topics and targets.topic:
+            topics = [targets.topic]
+        inner = {
+            "topics": topics,
+            "publications": list(targets.substack.publications),
+            "fetch_comments": True,
+            "comment_limit": 25,
+            "max_publications": 6,
         }
     else:
         inner = {
@@ -152,6 +171,13 @@ def has_targets(platform: str, targets: ScrapeTargets) -> bool:
         return bool(targets.hackernews.search_queries)
     if platform == "x":
         return bool(targets.x.search_queries)
+    if platform == "substack":
+        return bool(
+            targets.substack.topics
+            or targets.substack.search_queries
+            or targets.substack.publications
+            or targets.topic
+        )
     return False
 
 
@@ -277,7 +303,7 @@ async def scrape_social_platforms(
     per_target_limit: int = 15,
     fetch_bodies: bool = True,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Live Reddit/HN via social-signals. Returns (signals, per-platform notes).
+    """Live Reddit/HN/Substack via social-signals. Returns (signals, per-platform notes).
 
     Platforms run concurrently so a slow Reddit job does not block HN.
     Raises ``ScrapeUnavailable`` when every requested platform fails or the
@@ -285,7 +311,7 @@ async def scrape_social_platforms(
     """
 
     async def one(platform: str) -> tuple[str, list[dict[str, Any]] | None, str]:
-        if platform not in {"reddit", "hackernews"}:
+        if platform not in {"reddit", "hackernews", "substack"}:
             return platform, None, f"{platform}: unsupported"
         if not has_targets(platform, targets):
             return platform, None, f"{platform}: no targets"
@@ -393,10 +419,10 @@ async def _platform_stream(
         return
 
     # Nothing live. Fall back only when fixtures match this product family.
-    use_fixtures = allow_fixtures and platform != "x" and _fixtures_relevant(targets)
+    use_fixtures = allow_fixtures and platform not in {"x", "substack"} and _fixtures_relevant(targets)
     fixture = load_fixtures(platform) if use_fixtures else []
     if not fixture:
-        if allow_fixtures and platform != "x" and not _fixtures_relevant(targets):
+        if allow_fixtures and platform not in {"x", "substack"} and not _fixtures_relevant(targets):
             degraded.append(
                 f"{stage}: skipped Perplexity fixtures — targets are not about Perplexity"
             )
@@ -440,6 +466,8 @@ async def harvest_stream(
     platforms: list[str] = []
     if scrape_social and has_targets("hackernews", targets):
         platforms.append("hackernews")
+    if scrape_social and has_targets("substack", targets):
+        platforms.append("substack")
     if scrape_x and has_targets("x", targets):
         platforms.append("x")
     if scrape_social and has_targets("reddit", targets):

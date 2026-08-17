@@ -67,6 +67,7 @@ def test_has_targets_skips_a_platform_with_nothing_to_scrape() -> None:
     assert not has_targets("reddit", empty)
     assert not has_targets("hackernews", empty)
     assert not has_targets("x", empty)
+    assert not has_targets("substack", empty)
     assert has_targets("reddit", TARGETS)
 
 

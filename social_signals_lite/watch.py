@@ -10,6 +10,7 @@ from typing import Any
 
 from social_signals_lite import hackernews as hn
 from social_signals_lite import reddit_scrape as reddit
+from social_signals_lite import substack as substack_scrape
 
 
 def _now() -> str:
@@ -230,6 +231,55 @@ def watch_reddit(targets: dict[str, Any], per_target_limit: int) -> list[dict[st
     return signals
 
 
+def watch_substack(targets: dict[str, Any], per_target_limit: int) -> list[dict[str, Any]]:
+    topics = [t for t in (targets.get("topics") or targets.get("search_queries") or []) if str(t).strip()]
+    publications = [p for p in (targets.get("publications") or []) if str(p).strip()]
+    fetch_comments = bool(targets.get("fetch_comments", True))
+    comment_limit = int(targets.get("comment_limit", 25))
+    max_pubs = int(targets.get("max_publications", 6))
+
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    # Topic is the primary key. Publications without a topic still harvest
+    # their latest archive (empty topic string).
+    queries = topics or ([""] if publications else [])
+    for topic in queries:
+        batch = substack_scrape.scrape_topic(
+            topic,
+            publications=publications,
+            per_target_limit=per_target_limit,
+            max_publications=max_pubs,
+            fetch_comments=fetch_comments,
+            comment_limit=comment_limit,
+        )
+        for item in batch:
+            key = str(item.get("id") or item.get("url") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            items.append(item)
+
+    out: list[dict[str, Any]] = []
+    for item in items:
+        url = item.get("url") or ""
+        sid = item.get("id") or url or "substack"
+        out.append(
+            _signal(
+                platform="substack",
+                signal_id=str(sid),
+                url=url,
+                title=item.get("title") or "",
+                body=item.get("body") or "",
+                author=item.get("author") or "substack",
+                score=str(item.get("score") or ""),
+                engagement=item.get("engagement") or {},
+                scraped_at=item.get("scraped_at"),
+                raw=item.get("raw") or item,
+            )
+        )
+    return out
+
+
 def run_watch(
     platform: str,
     targets: dict[str, Any],
@@ -242,4 +292,6 @@ def run_watch(
         return watch_hackernews(plat_targets, per_target_limit)
     if platform == "reddit":
         return watch_reddit(plat_targets, per_target_limit)
+    if platform == "substack":
+        return watch_substack(plat_targets, per_target_limit)
     raise ValueError(f"unsupported platform: {platform}")

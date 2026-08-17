@@ -1,0 +1,12 @@
+---
+description: Fieldnotes is post-hackathon, topic-first social sentiment
+alwaysApply: true
+---
+
+# Fieldnotes direction (post-hackathon)
+
+Still developing. The scrape **topic** is the primary target (general sentiment / social signal). Product, repo, and website are optional discriminators — they do not have to drive T0/T1.
+
+Wanted coverage includes **Substack articles and comments on a topic**, not only a known publication's archive. Prefer unofficial HTTP JSON (`publication/search`, `{pub}/api/v1/archive?search=`, post comments) over a new Playwright puppet. Official Substack APIs are the wrong tool (LinkedIn profile lookup; Publisher API is own-pub analytics).
+
+Stand-ins from the hackathon still apply: `x-scraper` is a disposable Playwright puppet (replace with a real X API key); `social_signals_lite` is a temporary `:8899` stand-in (replace with private social-signals when available).

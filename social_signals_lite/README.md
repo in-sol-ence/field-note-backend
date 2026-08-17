@@ -8,6 +8,28 @@ When you have access to the private social-signals repo, run **that** on
 `:8899` (or point `SOCIAL_SIGNALS_URL` / `FIELDNOTE_SCRAPER` at it) and stop
 using lite. Do not treat this package as the long-term scraper.
 
+## Substack (topic-first)
+
+Unofficial public JSON — not an official API. Harvests **articles and
+comments** for a topic:
+
+```bash
+curl -sS http://127.0.0.1:8899/v1/jobs/watch \
+  -H 'Authorization: Bearer demo-key' -H 'Content-Type: application/json' \
+  -d '{"platform":"substack","per_target_limit":8,"targets":{"substack":{"topics":["AI coding assistants"]}},"include_signals":true}'
+```
+
+Or via the backend:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/scrape/social \
+  -H 'content-type: application/json' \
+  -d '{"platforms":["substack"],"topic":"AI coding assistants","per_target_limit":8}'
+```
+
+`topic` is the primary key. Optional `publications` pin known newsletters.
+Paid post bodies are empty without a session; comments are public threads.
+
 ## Run
 
 ```bash

@@ -153,7 +153,7 @@ class ProductDossier(BaseModel):
 # T1 — sources and posts
 # --------------------------------------------------------------------------
 
-Platform = Literal["reddit", "x", "hackernews", "github"]
+Platform = Literal["reddit", "x", "hackernews", "github", "substack"]
 
 
 class RedditTargets(BaseModel):
@@ -176,12 +176,34 @@ class XTargets(BaseModel):
     search_queries: list[str] = Field(default_factory=list)
 
 
-class ScrapeTargets(BaseModel):
-    """T1's output: what to scrape, derived from the dossier's discriminator."""
+class SubstackTargets(BaseModel):
+    """Where on Substack to look. Topic is the primary key.
 
+    Publications are optional — when omitted, publication search is derived
+    from `topics`. Search queries are an alias for topics.
+    """
+
+    topics: list[str] = Field(default_factory=list)
+    publications: list[str] = Field(default_factory=list)
+    search_queries: list[str] = Field(default_factory=list)
+
+
+class ScrapeTargets(BaseModel):
+    """T1's output: what to scrape.
+
+    `topic` is the primary social-signal aim (general sentiment). Product /
+    repo discriminators are optional and live on the dossier, not here.
+    """
+
+    topic: str | None = Field(
+        default=None,
+        description="Primary scrape aim. When set, Substack (and fallbacks) "
+        "search this instead of requiring a product name.",
+    )
     reddit: RedditTargets = Field(default_factory=RedditTargets)
     hackernews: HackerNewsTargets = Field(default_factory=HackerNewsTargets)
     x: XTargets = Field(default_factory=XTargets)
+    substack: SubstackTargets = Field(default_factory=SubstackTargets)
     rationale: str | None = Field(
         default=None,
         description="Why these targets, in one or two sentences. Shown to the "
@@ -264,6 +286,7 @@ Stage = Literal[
     "select_sources",
     "scrape_reddit",
     "scrape_hackernews",
+    "scrape_substack",
     "scrape_x",
     "map_posts",
     # T2

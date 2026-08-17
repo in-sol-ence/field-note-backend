@@ -10,9 +10,9 @@ import hashlib
 import re
 from typing import Any
 
-SUPPORTED_PLATFORMS = frozenset({"reddit", "x", "hackernews", "github"})
+SUPPORTED_PLATFORMS = frozenset({"reddit", "x", "hackernews", "github", "substack"})
 
-_ID_PREFIX = {"reddit": "rd", "x": "x", "hackernews": "hn", "github": "gh"}
+_ID_PREFIX = {"reddit": "rd", "x": "x", "hackernews": "hn", "github": "gh", "substack": "ss"}
 
 HN_ITEM = "https://news.ycombinator.com/item?id={}"
 
@@ -62,6 +62,8 @@ def _source_id(platform: str, url: str, raw: dict[str, Any], signal_id: str | No
         return f"t3_{match.group(1)}" if match else None
     if platform == "hackernews":
         return str(raw.get("objectID") or signal_id or "") or None
+    if platform == "substack":
+        return str(raw.get("id") or signal_id or "") or None
     # X: social-signals often omits raw.id; x-scraper puts the tweet id there.
     # signal_id is always the tweet id in both shapes.
     return str(raw.get("id") or signal_id or "") or None
@@ -180,9 +182,23 @@ def _hackernews_fields(raw: dict[str, Any], engagement: dict[str, Any]) -> dict[
     }
 
 
+def _substack_fields(raw: dict[str, Any], engagement: dict[str, Any]) -> dict[str, Any]:
+    comments = _comments(raw.get("comments"))
+    channel = raw.get("publication") or raw.get("publication_url")
+    return {
+        "channel": channel,
+        "title": raw.get("title"),
+        "comments": comments,
+        "num_comments": _to_int(
+            engagement.get("comments") or raw.get("comments_count") or len(comments)
+        ),
+    }
+
+
 _PLATFORM_FIELDS = {
     "reddit": _reddit_fields,
     "hackernews": _hackernews_fields,
+    "substack": _substack_fields,
 }
 
 
