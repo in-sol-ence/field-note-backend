@@ -29,14 +29,30 @@ uv run uvicorn demo_server:app --port 8000
 
 It returns the same dossier whatever you ask for, so never point a real run at it.
 
-**T1 still scrapes live** in demo mode when `social_signals_lite` (`:8899`) and
-`x-scraper` are up — only T0 is canned. See `notes-gregory.md` §11 for the
-checklist to go **fully live** (real dossier + live scrapes).
+**T1 still scrapes live** in demo mode when a `:8899` scraper and `x-scraper`
+are up — only T0 is canned. See `notes-gregory.md` §11 for the checklist to go
+**fully live** (real dossier + live scrapes).
+
+### Scrape stand-ins (replace these)
+
+**social-signals-lite (this repo).** `social_signals_lite/` +
+`scripts/run_social_signals_lite.sh` expose a `:8899`-compatible watch API so
+T1 can get live Reddit/HN without the private **social-signals** checkout.
+This is a **temporary substitute**. When you have the private social-signals
+repo, run that instead and point `SOCIAL_SIGNALS_URL` / `FIELDNOTE_SCRAPER` at
+it; retire lite.
+
+**X via x-scraper.** Live X today goes through the Playwright `x-scraper`
+puppet (`X_SCRAPER_ROOT` / `FIELDNOTE_X_SCRAPER`). That is **not** an official
+X integration. Replace it with a client that uses a **real X API key**. Do
+not ship the puppet as the production X path.
 
 ## Fully live (real dossier)
 
 1. Copy `.env.example` → `.env` and set `XAI_API_KEY`, `FIRECRAWL_API_KEY`, `EXA_API_KEY`.
-2. Start scrapers: `./scripts/run_social_signals_lite.sh` and ensure `~/x-scraper` works.
+2. Start scrapers: prefer the **private social-signals** service on `:8899`;
+   otherwise `./scripts/run_social_signals_lite.sh`. For X, prefer a real X
+   API client; the Playwright puppet is `~/x-scraper`.
 3. Run `main:app` (not demo), e.g. via the CLI **without** `--demo`:
 
 ```bash

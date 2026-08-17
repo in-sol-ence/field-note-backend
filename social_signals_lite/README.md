@@ -1,8 +1,12 @@
 # social-signals-lite
 
-Drop-in stand-in for the private `social-signals` service so Fieldnotes T1 can
-scrape **live Hacker News** (Algolia) and **live Reddit** (Playwright) without
-that monorepo.
+**Temporary substitute — replace this.** Drop-in stand-in for the private
+`social-signals` service so Fieldnotes T1 can scrape **live Hacker News**
+(Algolia) and **live Reddit** (Playwright) without that monorepo.
+
+When you have access to the private social-signals repo, run **that** on
+`:8899` (or point `SOCIAL_SIGNALS_URL` / `FIELDNOTE_SCRAPER` at it) and stop
+using lite. Do not treat this package as the long-term scraper.
 
 ## Run
 

@@ -247,7 +247,8 @@ Checked: **no real API secrets in public git trees** (`.env` ignored; `.env.exam
 - **X + Reddit both use Chromium** — harvest runs **HN → X → Reddit** sequentially so they don’t collide.
 - **Perplexity fixtures** only substitute when scrape targets look like Perplexity; Cursor runs fail loud instead of lying.
 - **Reddit detail pass** off by default (`FIELDNOTE_FETCH_BODIES=1` to enable permalink bodies).
-- Private `social-signals` monorepo is optional; `social_signals_lite` is the hackathon stand-in.
+- Private `social-signals` monorepo is the real Reddit/HN scraper; `social_signals_lite` is a temporary `:8899` stand-in — replace lite when you have the private repo.
+- `x-scraper` is a Playwright **puppet**, not an X API client. Durable live X needs a **real X API key**.
 
 ### Still open after fully live T0+T1
 

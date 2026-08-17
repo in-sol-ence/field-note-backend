@@ -84,8 +84,11 @@ convenience.
 
 ## Regenerating the data
 
-Scraping runs in the private `social-signals` repo, not here. `social_signals_patch/`
-holds the modified files; copy them over a checkout of that repo:
+Scraping is meant to run in the private `social-signals` repo, not here.
+`social_signals_lite/` is a **temporary :8899 stand-in** for the hackathon —
+replace it with the real private service when you have access.
+`social_signals_patch/` holds modified files; copy them over a checkout of
+that repo:
 
 ```
 social_signals_patch/reddit/scrape.py       -> social_signals/platforms/reddit/scrape.py
@@ -149,6 +152,10 @@ X ingest always exits as **`assets.Signal`** (via `x_signals.to_signals` /
 (same contract as ``scraping/data/signals_testfixture.json``: `raw.handle`,
 `raw.time`, engagement counts). HTTP responses include both `signals` and
 `posts` (T2 Post objects). Live x-scraper tweets never skip that mapping.
+
+**x-scraper is a Playwright puppet**, not an official X client. It exists so
+the hackathon can demo live X without API access. Replace it with a **real X
+API key** and API client before treating X ingest as production.
 
 X can be scraped through the field-note API without standing up social-signals:
 
